@@ -32,6 +32,7 @@ export type Sale = {
   paidArs: number
   paymentMethod: 'transferencia' | 'efectivo' | 'otro'
   paymentStatus: 'pendiente' | 'cobrado'
+  invoiceStatus?: 'facturado' | 'no_facturado' | 'pendiente' | 'no_aplica'
   delivered?: string | null
   billingNotes?: string | null
 }

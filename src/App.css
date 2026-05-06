@@ -545,6 +545,51 @@
   min-width: 74px;
 }
 
+.invoice-icon {
+  align-items: center;
+  border-radius: 8px;
+  display: inline-flex;
+  flex-shrink: 0;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+
+.invoice-icon svg {
+  fill: none;
+  height: 19px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.9;
+  width: 19px;
+}
+
+.sale-row-actions {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 6px;
+  justify-content: center;
+  min-width: 30px;
+}
+
+.invoice-icon.facturado {
+  background: rgba(52, 199, 89, 0.15);
+  color: var(--green);
+}
+
+.invoice-icon.pendiente {
+  background: rgba(255, 204, 0, 0.24);
+  color: #a07700;
+}
+
+.invoice-icon.no_facturado {
+  background: var(--gray-fill);
+  color: var(--label-3);
+}
+
 .amount {
   color: var(--label);
   flex-shrink: 0;
@@ -870,6 +915,16 @@
 
 .sheet-list-item span {
   color: var(--label-2);
+}
+
+.sheet-select {
+  background: var(--gray-fill);
+  border: 0;
+  border-radius: 9px;
+  color: var(--label);
+  font: inherit;
+  max-width: 210px;
+  padding: 7px 10px;
 }
 
 .promo-section {

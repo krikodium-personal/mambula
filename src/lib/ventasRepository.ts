@@ -29,6 +29,7 @@ type SaleRow = {
   paid_ars: number
   payment_method: Sale['paymentMethod']
   payment_status: Sale['paymentStatus']
+  invoice_status: NonNullable<Sale['invoiceStatus']>
   delivered: string | null
   billing_notes: string | null
 }
@@ -43,6 +44,7 @@ export type SaleUpdateInput = Pick<
   | 'paidArs'
   | 'paymentMethod'
   | 'paymentStatus'
+  | 'invoiceStatus'
   | 'delivered'
   | 'billingNotes'
 >
@@ -102,6 +104,7 @@ export async function createSale(input: SaleCreateInput): Promise<Sale> {
       paid_ars: input.paidArs,
       payment_method: input.paymentMethod,
       payment_status: input.paymentStatus,
+      invoice_status: input.invoiceStatus ?? 'no_aplica',
       delivered: input.delivered,
       billing_notes: input.billingNotes,
     })
@@ -145,6 +148,7 @@ export async function updateSale(input: SaleUpdateInput): Promise<Sale> {
       paid_ars: input.paidArs,
       payment_method: input.paymentMethod,
       payment_status: input.paymentStatus,
+      invoice_status: input.invoiceStatus ?? 'no_aplica',
       delivered: input.delivered,
       billing_notes: input.billingNotes,
     })
@@ -238,6 +242,7 @@ function mapSale(row: SaleRow): Sale {
     paidArs: Number(row.paid_ars),
     paymentMethod: row.payment_method,
     paymentStatus: row.payment_status,
+    invoiceStatus: row.invoice_status ?? 'no_aplica',
     delivered: row.delivered,
     billingNotes: row.billing_notes,
   }

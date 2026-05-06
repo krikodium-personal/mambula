@@ -24,6 +24,7 @@ type SaleDraft = {
   paidArs: string
   paymentMethod: Sale['paymentMethod']
   paymentStatus: Sale['paymentStatus']
+  invoiceStatus: NonNullable<Sale['invoiceStatus']>
   delivered: string
   billingNotes: string
 }
@@ -168,6 +169,7 @@ function App() {
   const [savingStockAllocations, setSavingStockAllocations] = useState(false)
   const [stockAllocationError, setStockAllocationError] = useState<string | null>(null)
   const [togglingDeliveryId, setTogglingDeliveryId] = useState<string | null>(null)
+  const [savingInvoiceSaleId, setSavingInvoiceSaleId] = useState<string | null>(null)
 
   useEffect(() => {
     let ignore = false
@@ -235,6 +237,7 @@ function App() {
       paidArs: sale.paidArs.toString(),
       paymentMethod: sale.paymentMethod,
       paymentStatus: sale.paymentStatus,
+      invoiceStatus: sale.invoiceStatus ?? 'no_aplica',
       delivered: sale.delivered ?? '',
       billingNotes: sale.billingNotes ?? '',
     })
@@ -258,6 +261,7 @@ function App() {
       paidArs: parseOptionalNumber(saleDraft.paidArs) ?? 0,
       paymentMethod: saleDraft.paymentMethod,
       paymentStatus: saleDraft.paymentStatus,
+      invoiceStatus: saleDraft.invoiceStatus,
       delivered: emptyToNull(saleDraft.delivered),
       billingNotes: emptyToNull(saleDraft.billingNotes),
     }
@@ -347,6 +351,7 @@ function App() {
         paidArs: sale.paidArs,
         paymentMethod: sale.paymentMethod,
         paymentStatus: sale.paymentStatus,
+        invoiceStatus: sale.invoiceStatus ?? 'no_aplica',
         delivered: nextDelivered,
         billingNotes: sale.billingNotes ?? null,
       })
@@ -360,6 +365,36 @@ function App() {
       setEditError(error instanceof Error ? error.message : 'No se pudo actualizar la entrega.')
     } finally {
       setTogglingDeliveryId(null)
+    }
+  }
+
+  async function updateSaleInvoiceStatus(sale: Sale, invoiceStatus: NonNullable<Sale['invoiceStatus']>) {
+    try {
+      setSavingInvoiceSaleId(sale.id)
+      setEditError(null)
+      const updatedSale = await updateSale({
+        id: sale.id,
+        buyer: sale.buyer,
+        seller: sale.seller,
+        quantity: sale.quantity,
+        unitPriceArs: sale.unitPriceArs,
+        paidArs: sale.paidArs,
+        paymentMethod: sale.paymentMethod,
+        paymentStatus: sale.paymentStatus,
+        invoiceStatus,
+        delivered: sale.delivered ?? null,
+        billingNotes: sale.billingNotes ?? null,
+      })
+
+      setVentasData((current) => ({
+        ...current,
+        sales: current.sales.map((item) => (item.id === sale.id ? updatedSale : item)),
+      }))
+      setSelectedSale(updatedSale)
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : 'No se pudo actualizar la facturación.')
+    } finally {
+      setSavingInvoiceSaleId(null)
     }
   }
 
@@ -432,6 +467,7 @@ function App() {
           sale={selectedSale}
           saleDraft={saleDraft}
           savingSaleId={savingSaleId}
+          savingInvoice={savingInvoiceSaleId === selectedSale.id}
           cancelEditingSale={cancelEditingSale}
           onClose={() => {
             setSelectedSale(null)
@@ -442,6 +478,7 @@ function App() {
           saveEditingSale={saveEditingSale}
           setSaleDraft={setSaleDraft}
           startEditingSale={startEditingSale}
+          updateInvoiceStatus={updateSaleInvoiceStatus}
         />
       ) : null}
 
@@ -868,6 +905,7 @@ function SaleRow({
             <option value="efectivo">Efectivo</option>
             <option value="otro">Otro</option>
           </select>
+          <InvoiceStatusSelect value={saleDraft.invoiceStatus} onChange={(invoiceStatus) => setSaleDraft({ ...saleDraft, invoiceStatus })} />
           <DeliveredSelect value={saleDraft.delivered} onChange={(delivered) => setSaleDraft({ ...saleDraft, delivered })} />
           <input className="wide" placeholder="Nota" value={saleDraft.billingNotes} onChange={(event) => setSaleDraft({ ...saleDraft, billingNotes: event.target.value })} />
         </div>
@@ -908,14 +946,17 @@ function SaleRow({
           <StatusPill kind={status} />
         </div>
       </div>
-      <DeliveryIndicator
-        delivered={isDelivered(sale)}
-        disabled={togglingDelivery}
-        onClick={(event) => {
-          event.stopPropagation()
-          onToggleDelivered(sale)
-        }}
-      />
+      <div className="sale-row-actions">
+        <InvoiceIcon status={sale.invoiceStatus ?? 'no_aplica'} />
+        <DeliveryIndicator
+          delivered={isDelivered(sale)}
+          disabled={togglingDelivery}
+          onClick={(event) => {
+            event.stopPropagation()
+            onToggleDelivered(sale)
+          }}
+        />
+      </div>
     </div>
   )
 }
@@ -929,10 +970,12 @@ function SaleDetailSheet({
   onClose,
   sale,
   saleDraft,
+  savingInvoice,
   savingSaleId,
   saveEditingSale,
   setSaleDraft,
   startEditingSale,
+  updateInvoiceStatus,
 }: {
   cancelEditingSale: () => void
   deleting: boolean
@@ -942,10 +985,12 @@ function SaleDetailSheet({
   onClose: () => void
   sale: Sale
   saleDraft: SaleDraft | null
+  savingInvoice: boolean
   savingSaleId: string | null
   saveEditingSale: (saleId: string) => void
   setSaleDraft: (draft: SaleDraft) => void
   startEditingSale: (sale: Sale) => void
+  updateInvoiceStatus: (sale: Sale, invoiceStatus: NonNullable<Sale['invoiceStatus']>) => void
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const totalArs = getSaleTotal(sale)
@@ -1015,6 +1060,22 @@ function SaleDetailSheet({
             <ListGroup title="Entrega">
               <ListItem label="Estado" value={sale.delivered ?? 'Por entregar'} />
               <ListItem label="Nota" value={sale.billingNotes ?? '-'} />
+            </ListGroup>
+            <ListGroup title="Facturación">
+              <div className="sheet-list-item">
+                <span>Estado</span>
+                <select
+                  className="sheet-select"
+                  disabled={savingInvoice}
+                  value={sale.invoiceStatus ?? 'no_aplica'}
+                  onChange={(event) => updateInvoiceStatus(sale, event.target.value as NonNullable<Sale['invoiceStatus']>)}
+                >
+                  <option value="no_aplica">No va a ser facturado</option>
+                  <option value="no_facturado">No facturado</option>
+                  <option value="pendiente">Pendiente</option>
+                  <option value="facturado">Facturado</option>
+                </select>
+              </div>
             </ListGroup>
             <button className="primary-button full" onClick={() => startEditingSale(sale)} type="button">
               Editar venta
@@ -1611,6 +1672,23 @@ function DeliveredSelect({
   )
 }
 
+function InvoiceStatusSelect({
+  onChange,
+  value,
+}: {
+  onChange: (invoiceStatus: NonNullable<Sale['invoiceStatus']>) => void
+  value: NonNullable<Sale['invoiceStatus']>
+}) {
+  return (
+    <select aria-label="Facturación" value={value} onChange={(event) => onChange(event.target.value as NonNullable<Sale['invoiceStatus']>)}>
+      <option value="no_aplica">No se factura</option>
+      <option value="no_facturado">No facturado</option>
+      <option value="pendiente">Pendiente</option>
+      <option value="facturado">Facturado</option>
+    </select>
+  )
+}
+
 function TabBar({ active, onChange }: { active: AppTab; onChange: (tab: AppTab) => void }) {
   const tabs: Array<{ key: AppTab; label: string; icon: IconName }> = [
     { key: 'home', label: 'Inicio', icon: 'home' },
@@ -1625,7 +1703,10 @@ function TabBar({ active, onChange }: { active: AppTab; onChange: (tab: AppTab) 
         <button
           className={active === tab.key ? 'active' : ''}
           key={tab.key}
-          onClick={() => onChange(tab.key)}
+          onClick={() => {
+            onChange(tab.key)
+            window.scrollTo({ top: 0, behavior: 'smooth' })
+          }}
           type="button"
         >
           <Icon name={tab.icon} />
@@ -1674,6 +1755,28 @@ function DeliveryIndicator({
       {delivered ? '✓' : '×'}
     </button>
   )
+}
+
+function InvoiceIcon({ status }: { status: NonNullable<Sale['invoiceStatus']> }) {
+  if (status === 'no_aplica') return null
+
+  return (
+    <span className={`invoice-icon ${status}`} title={invoiceStatusLabel(status)}>
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M6 3h12v18l-2-1.2L14 21l-2-1.2L10 21l-2-1.2L6 21V3Z" />
+        <path d="M9 8h6" />
+        <path d="M9 12h6" />
+        <path d="M9 16h4" />
+      </svg>
+    </span>
+  )
+}
+
+function invoiceStatusLabel(status: NonNullable<Sale['invoiceStatus']>) {
+  if (status === 'facturado') return 'Facturado'
+  if (status === 'pendiente') return 'Facturación pendiente'
+  if (status === 'no_facturado') return 'No facturado'
+  return 'No va a ser facturado'
 }
 
 function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }) {
@@ -1826,6 +1929,7 @@ function createEmptySaleDraft(): SaleDraft {
     paidArs: '',
     paymentMethod: 'transferencia',
     paymentStatus: 'pendiente',
+    invoiceStatus: 'no_aplica',
     delivered: '',
     billingNotes: '',
   }
@@ -1870,6 +1974,7 @@ function draftToSaleInput(draft: SaleDraft): SaleCreateInput {
     paidArs: parseOptionalNumber(draft.paidArs) ?? 0,
     paymentMethod: draft.paymentMethod,
     paymentStatus: draft.paymentStatus,
+    invoiceStatus: draft.invoiceStatus,
     delivered: emptyToNull(draft.delivered),
     billingNotes: emptyToNull(draft.billingNotes),
   }
