@@ -1291,6 +1291,16 @@ function GastosScreen() {
   const [expenseDraft, setExpenseDraft] = useState<ExpenseDraft | null>(null)
   const [expenseError, setExpenseError] = useState<string | null>(null)
   const filtered = filter === 'todos' ? expenses : expenses.filter((item) => item.payer === filter)
+  const expenseIndexMap = useMemo(() => {
+    const map = new Map<Expense, number>()
+    expenses.forEach((item, index) => map.set(item, index))
+
+    return map
+  }, [expenses])
+  const sortedFiltered = useMemo(
+    () => [...filtered].sort((a, b) => compareExpensesNewestFirst(a, b, expenseIndexMap)),
+    [filtered, expenseIndexMap],
+  )
   const totalUsd = expenses.reduce((sum, item) => sum + item.usd, 0)
   const totalPesos = expenses.reduce((sum, item) => sum + (item.pesos ?? 0), 0)
   const payerTotals = ['Susan', 'Delfi', 'Mechi'].map((payer) => {
@@ -1303,7 +1313,7 @@ function GastosScreen() {
       usd: items.reduce((sum, item) => sum + item.usd, 0),
     }
   })
-  const groups = groupBy(filtered, (item) => `${item.month} ${item.year}`)
+  const groups = groupBy(sortedFiltered, (item) => `${item.month} ${item.year}`)
 
   function saveExpense() {
     if (!expenseDraft) return
@@ -1941,6 +1951,33 @@ function groupBy<T>(items: T[], getKey: (item: T) => string) {
   }
 
   return Array.from(groups.entries())
+}
+
+const EXPENSE_MONTH_INDEX: Record<string, number> = {
+  Enero: 1,
+  Febrero: 2,
+  Marzo: 3,
+  Abril: 4,
+  Mayo: 5,
+  Junio: 6,
+  Julio: 7,
+  Agosto: 8,
+  Septiembre: 9,
+  Octubre: 10,
+  Noviembre: 11,
+  Diciembre: 12,
+}
+
+function expenseMonthIndex(month: string): number {
+  return EXPENSE_MONTH_INDEX[month] ?? 0
+}
+
+function compareExpensesNewestFirst(a: Expense, b: Expense, indexByExpense: Map<Expense, number>): number {
+  if (b.year !== a.year) return b.year - a.year
+  const monthDelta = expenseMonthIndex(b.month) - expenseMonthIndex(a.month)
+  if (monthDelta !== 0) return monthDelta
+
+  return (indexByExpense.get(b) ?? 0) - (indexByExpense.get(a) ?? 0)
 }
 
 function getTabFromLocation(): AppTab {
