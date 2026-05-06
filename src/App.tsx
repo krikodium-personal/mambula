@@ -484,6 +484,7 @@ function App() {
           saleDraft={saleDraft}
           savingSaleId={savingSaleId}
           savingInvoice={savingInvoiceSaleId === selectedSale.id}
+          togglingDelivery={togglingDeliveryId === selectedSale.id}
           cancelEditingSale={cancelEditingSale}
           onClose={() => {
             setSelectedSale(null)
@@ -491,6 +492,7 @@ function App() {
           }}
           deleting={deletingSaleId === selectedSale.id}
           deleteSale={handleDeleteSale}
+          onToggleDelivered={toggleSaleDelivered}
           saveEditingSale={saveEditingSale}
           setSaleDraft={setSaleDraft}
           startEditingSale={startEditingSale}
@@ -914,7 +916,7 @@ function SaleRow({
           <input value={saleDraft.buyer} onChange={(event) => setSaleDraft({ ...saleDraft, buyer: event.target.value })} />
           <SellerSelect value={saleDraft.seller} onChange={(seller) => setSaleDraft({ ...saleDraft, seller })} />
           <input inputMode="numeric" placeholder="Unidades" value={saleDraft.quantity} onChange={(event) => setSaleDraft({ ...saleDraft, quantity: event.target.value })} />
-          <input inputMode="numeric" placeholder="Precio" value={saleDraft.unitPriceArs} onChange={(event) => setSaleDraft({ ...saleDraft, unitPriceArs: event.target.value })} />
+          <UnitPriceSelect value={saleDraft.unitPriceArs} onChange={(unitPriceArs) => setSaleDraft({ ...saleDraft, unitPriceArs })} />
           <input inputMode="numeric" placeholder="Pagado" value={saleDraft.paidArs} onChange={(event) => setSaleDraft({ ...saleDraft, paidArs: event.target.value })} />
           <select value={saleDraft.paymentMethod} onChange={(event) => setSaleDraft({ ...saleDraft, paymentMethod: event.target.value as Sale['paymentMethod'] })}>
             <option value="transferencia">Transferencia</option>
@@ -984,6 +986,7 @@ function SaleDetailSheet({
   editError,
   editingSaleId,
   onClose,
+  onToggleDelivered,
   sale,
   saleDraft,
   savingInvoice,
@@ -991,6 +994,7 @@ function SaleDetailSheet({
   saveEditingSale,
   setSaleDraft,
   startEditingSale,
+  togglingDelivery,
   updateInvoiceStatus,
 }: {
   cancelEditingSale: () => void
@@ -999,6 +1003,7 @@ function SaleDetailSheet({
   editError: string | null
   editingSaleId: string | null
   onClose: () => void
+  onToggleDelivered: (sale: Sale) => void
   sale: Sale
   saleDraft: SaleDraft | null
   savingInvoice: boolean
@@ -1006,6 +1011,7 @@ function SaleDetailSheet({
   saveEditingSale: (saleId: string) => void
   setSaleDraft: (draft: SaleDraft) => void
   startEditingSale: (sale: Sale) => void
+  togglingDelivery: boolean
   updateInvoiceStatus: (sale: Sale, invoiceStatus: NonNullable<Sale['invoiceStatus']>) => void
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -1074,7 +1080,17 @@ function SaleDetailSheet({
               <ListItem label="Vendedor" value={sale.seller ?? '-'} />
             </ListGroup>
             <ListGroup title="Entrega">
-              <ListItem label="Estado" value={sale.delivered ?? 'Por entregar'} />
+              <div className="sheet-list-item sheet-list-item-delivery">
+                <span>Estado</span>
+                <DeliveryStatusToggle
+                  delivered={isDelivered(sale)}
+                  disabled={togglingDelivery}
+                  onSelectDelivered={(next) => {
+                    if (next === isDelivered(sale)) return
+                    void onToggleDelivered(sale)
+                  }}
+                />
+              </div>
               <ListItem label="Nota" value={sale.billingNotes ?? '-'} />
             </ListGroup>
             <ListGroup title="Facturación">
@@ -1153,7 +1169,7 @@ function NewSaleSheet({
             <input placeholder="Comprador" value={createDraft.buyer} onChange={(event) => setCreateDraft({ ...createDraft, buyer: event.target.value })} />
             <SellerSelect value={createDraft.seller} onChange={(seller) => setCreateDraft({ ...createDraft, seller })} />
             <input inputMode="numeric" placeholder="Unidades" value={createDraft.quantity} onChange={(event) => setCreateDraft({ ...createDraft, quantity: event.target.value })} />
-            <input inputMode="numeric" placeholder="Precio unitario" value={createDraft.unitPriceArs} onChange={(event) => setCreateDraft({ ...createDraft, unitPriceArs: event.target.value })} />
+            <UnitPriceSelect value={createDraft.unitPriceArs} onChange={(unitPriceArs) => setCreateDraft({ ...createDraft, unitPriceArs })} />
             <input inputMode="numeric" placeholder="Pagado" value={createDraft.paidArs} onChange={(event) => setCreateDraft({ ...createDraft, paidArs: event.target.value })} />
             <select value={createDraft.paymentMethod} onChange={(event) => setCreateDraft({ ...createDraft, paymentMethod: event.target.value as Sale['paymentMethod'] })}>
               <option value="transferencia">Transferencia</option>
@@ -1689,6 +1705,39 @@ function SellerSelect({
   )
 }
 
+const UNIT_PRICE_ARS_VALUES = [15000, 12500, 7500] as const
+
+function formatUnitPriceOptionLabel(ars: number) {
+  return ars.toLocaleString('es-AR', { maximumFractionDigits: 0 })
+}
+
+function UnitPriceSelect({
+  onChange,
+  value,
+}: {
+  onChange: (unitPriceArs: string) => void
+  value: string
+}) {
+  const numeric = parseOptionalNumber(value)
+  const isPreset = numeric !== null && UNIT_PRICE_ARS_VALUES.some((v) => v === numeric)
+  const extraOption =
+    value !== '' && numeric !== null && !isPreset ? (
+      <option value={value}>{formatUnitPriceOptionLabel(numeric)}</option>
+    ) : null
+
+  return (
+    <select aria-label="Precio unitario" value={value} onChange={(event) => onChange(event.target.value)}>
+      <option value="">Precio unitario</option>
+      {UNIT_PRICE_ARS_VALUES.map((ars) => (
+        <option key={ars} value={String(ars)}>
+          {formatUnitPriceOptionLabel(ars)}
+        </option>
+      ))}
+      {extraOption}
+    </select>
+  )
+}
+
 function DeliveredSelect({
   onChange,
   value,
@@ -1702,6 +1751,43 @@ function DeliveredSelect({
       <option value="SI">SI</option>
       <option value="NO">NO</option>
     </select>
+  )
+}
+
+function DeliveryStatusToggle({
+  delivered,
+  disabled,
+  onSelectDelivered,
+}: {
+  delivered: boolean
+  disabled: boolean
+  onSelectDelivered: (delivered: boolean) => void
+}) {
+  return (
+    <div
+      aria-label="Estado de entrega"
+      className={`delivery-status-toggle ${delivered ? 'is-delivered' : 'is-pending'}`}
+      role="group"
+    >
+      <button
+        aria-pressed={!delivered}
+        className={delivered ? undefined : 'active'}
+        disabled={disabled}
+        onClick={() => onSelectDelivered(false)}
+        type="button"
+      >
+        Por entregar
+      </button>
+      <button
+        aria-pressed={delivered}
+        className={delivered ? 'active' : undefined}
+        disabled={disabled}
+        onClick={() => onSelectDelivered(true)}
+        type="button"
+      >
+        Entregado
+      </button>
+    </div>
   )
 }
 

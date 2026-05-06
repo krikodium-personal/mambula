@@ -924,6 +924,63 @@
   color: var(--label-2);
 }
 
+.sheet-list-item-delivery {
+  align-items: center;
+}
+
+.delivery-status-toggle {
+  border-radius: 10px;
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 3px;
+  max-width: 100%;
+  padding: 3px;
+}
+
+.delivery-status-toggle.is-pending {
+  background: rgba(255, 204, 0, 0.35);
+}
+
+.delivery-status-toggle.is-delivered {
+  background: rgba(52, 199, 89, 0.28);
+}
+
+.delivery-status-toggle button {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--label-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.delivery-status-toggle button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.delivery-status-toggle.is-pending button.active {
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  color: #b45300;
+}
+
+.delivery-status-toggle.is-delivered button.active {
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  color: #1f7a3a;
+}
+
+.delivery-status-toggle button:not(.active):hover:not(:disabled) {
+  color: var(--label);
+}
+
 .sheet-select {
   background: var(--gray-fill);
   border: 0;
