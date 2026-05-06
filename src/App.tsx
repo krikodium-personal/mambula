@@ -823,7 +823,7 @@ function VentasScreen({
       <div className="stats-row">
         <StatCard label="Total vendido" value={formatCompact(grossSalesArs)} />
         <StatCard accent="green" label="Pagado" value={formatCompact(paidSalesArs)} />
-        <StatCard accent="orange" label="Pendiente" value={formatCompact(pendingSalesArs)} />
+        <StatCard accent="orange" label="Por pagar" value={formatCompact(pendingSalesArs)} />
       </div>
 
       <div className="seller-stats">
@@ -848,7 +848,7 @@ function VentasScreen({
         active={filter}
         options={[
           { key: 'todas', label: 'Todas', count: sellerScopedSales.length },
-          { key: 'pendiente', label: 'Pendiente', count: pendingCount },
+          { key: 'pendiente', label: 'Por pagar', count: pendingCount },
           { key: 'porEntregar', label: 'Por entregar', count: deliveryCount },
         ]}
         onChange={setFilter}
@@ -1069,7 +1069,7 @@ function SaleDetailSheet({
               </div>
               <div className="progress-values">
                 <span>Pagado {currencyArsFormatter.format(sale.paidArs)}</span>
-                <span>Pendiente {currencyArsFormatter.format(pendingArs)}</span>
+                <span>Por pagar {currencyArsFormatter.format(pendingArs)}</span>
               </div>
             </div>
 
@@ -1177,7 +1177,7 @@ function NewSaleSheet({
               <option value="otro">Otro</option>
             </select>
             <select value={createDraft.paymentStatus} onChange={(event) => setCreateDraft({ ...createDraft, paymentStatus: event.target.value as Sale['paymentStatus'] })}>
-              <option value="pendiente">Pendiente</option>
+              <option value="pendiente">Por pagar</option>
               <option value="cobrado">Cobrado</option>
             </select>
             <InvoiceStatusSelect value={createDraft.invoiceStatus} onChange={(invoiceStatus) => setCreateDraft({ ...createDraft, invoiceStatus })} />
@@ -1917,7 +1917,11 @@ function RuleRow({ label, value }: { label: string; value: string }) {
 }
 
 function StatusPill({ kind }: { kind: 'pagado' | 'parcial' | 'pendiente' }) {
-  return <span className={`status-pill ${kind}`}>{kind === 'pagado' ? 'Pagado' : kind === 'parcial' ? 'Parcial' : 'Pendiente'}</span>
+  return (
+    <span className={`status-pill ${kind}`}>
+      {kind === 'pagado' ? 'Pagado' : kind === 'parcial' ? 'Parcial' : 'Por pagar'}
+    </span>
+  )
 }
 
 function ListGroup({ children, title }: { children: React.ReactNode; title: string }) {
