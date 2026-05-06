@@ -28,6 +28,29 @@ type SaleDraft = {
   billingNotes: string
 }
 type StockAllocationDraft = Record<string, { copies: string; boxes: string }>
+type PromoGroup = keyof typeof promoData
+type PromoDraft = {
+  nombre: string
+  unidades: string
+  group: PromoGroup
+  entregado: string
+}
+type ExpenseDraft = {
+  concept: string
+  pesos: string
+  rate: string
+  usd: string
+  payer: string
+}
+type Expense = {
+  year: number
+  month: string
+  concept: string
+  pesos: number | null
+  rate: number | null
+  usd: number
+  payer: string
+}
 
 const numberFormatter = new Intl.NumberFormat('es-AR')
 const currencyArsFormatter = new Intl.NumberFormat('es-AR', {
@@ -87,7 +110,7 @@ const promoData = {
   ],
 }
 
-const gastosData = [
+const gastosData: Expense[] = [
   { year: 2024, month: 'Septiembre', concept: 'Pistas Andres', pesos: 51800, rate: 1295, usd: 40, payer: 'Susan' },
   { year: 2024, month: 'Septiembre', concept: 'Pistas Andres', pesos: 51800, rate: 1295, usd: 40, payer: 'Delfi' },
   { year: 2024, month: 'Septiembre', concept: 'Pistas Andres', pesos: 51800, rate: 1295, usd: 40, payer: 'Mechi' },
@@ -1083,6 +1106,8 @@ function NewSaleSheet({
 function PromocionalesScreen() {
   const [filter, setFilter] = useState<'todos' | 'pendientes' | 'entregados'>('todos')
   const [promoRows, setPromoRows] = useState(promoData)
+  const [promoDraft, setPromoDraft] = useState<PromoDraft | null>(null)
+  const [promoError, setPromoError] = useState<string | null>(null)
   const all = [...promoRows.equipo, ...promoRows.colaboracion, ...promoRows.influencers]
   const total = all.reduce((sum, row) => sum + row.unidades, 0)
   const delivered = all.filter((row) => row.entregado).reduce((sum, row) => sum + row.unidades, 0)
@@ -1094,6 +1119,32 @@ function PromocionalesScreen() {
         row.nombre === nombre ? { ...row, entregado: !row.entregado } : row
       )),
     }))
+  }
+
+  function savePromo() {
+    if (!promoDraft) return
+
+    const nombre = promoDraft.nombre.trim()
+    const unidades = parseStockNumber(promoDraft.unidades)
+
+    if (!nombre) {
+      setPromoError('Completá el nombre.')
+      return
+    }
+
+    setPromoRows((current) => ({
+      ...current,
+      [promoDraft.group]: [
+        ...current[promoDraft.group],
+        {
+          nombre,
+          unidades,
+          entregado: promoDraft.entregado === 'SI',
+        },
+      ],
+    }))
+    setPromoDraft(null)
+    setPromoError(null)
   }
 
   return (
@@ -1120,17 +1171,40 @@ function PromocionalesScreen() {
       <PromoSection filter={filter} group="equipo" rows={promoRows.equipo} tag="Equipo" title="Equipo Mambula" onToggleDelivered={toggleDelivered} />
       <PromoSection filter={filter} group="colaboracion" rows={promoRows.colaboracion} tag="Colaboración" title="Colaboradores" onToggleDelivered={toggleDelivered} />
       <PromoSection filter={filter} group="influencers" rows={promoRows.influencers} tag="Influencers" title="Prensa & influencers" onToggleDelivered={toggleDelivered} />
+      {promoDraft ? (
+        <NewPromoSheet
+          draft={promoDraft}
+          error={promoError}
+          onClose={() => {
+            setPromoDraft(null)
+            setPromoError(null)
+          }}
+          onSave={savePromo}
+          setDraft={setPromoDraft}
+        />
+      ) : null}
+      <button
+        aria-label="Agregar promocional"
+        className="floating-add-button red"
+        onClick={() => setPromoDraft(createEmptyPromoDraft())}
+        type="button"
+      >
+        +
+      </button>
     </section>
   )
 }
 
 function GastosScreen() {
   const [filter, setFilter] = useState('todos')
-  const filtered = filter === 'todos' ? gastosData : gastosData.filter((item) => item.payer === filter)
-  const totalUsd = gastosData.reduce((sum, item) => sum + item.usd, 0)
-  const totalPesos = gastosData.reduce((sum, item) => sum + (item.pesos ?? 0), 0)
+  const [expenses, setExpenses] = useState(gastosData)
+  const [expenseDraft, setExpenseDraft] = useState<ExpenseDraft | null>(null)
+  const [expenseError, setExpenseError] = useState<string | null>(null)
+  const filtered = filter === 'todos' ? expenses : expenses.filter((item) => item.payer === filter)
+  const totalUsd = expenses.reduce((sum, item) => sum + item.usd, 0)
+  const totalPesos = expenses.reduce((sum, item) => sum + (item.pesos ?? 0), 0)
   const payerTotals = ['Susan', 'Delfi', 'Mechi'].map((payer) => {
-    const items = gastosData.filter((item) => item.payer === payer)
+    const items = expenses.filter((item) => item.payer === payer)
 
     return {
       count: items.length,
@@ -1140,6 +1214,32 @@ function GastosScreen() {
     }
   })
   const groups = groupBy(filtered, (item) => `${item.month} ${item.year}`)
+
+  function saveExpense() {
+    if (!expenseDraft) return
+
+    const concept = expenseDraft.concept.trim()
+    const usd = parseOptionalNumber(expenseDraft.usd) ?? 0
+
+    if (!concept) {
+      setExpenseError('Completá el concepto.')
+      return
+    }
+
+    setExpenses((current) => [
+      ...current,
+      {
+        concept,
+        pesos: parseOptionalNumber(expenseDraft.pesos),
+        rate: parseOptionalNumber(expenseDraft.rate),
+        usd,
+        payer: expenseDraft.payer,
+        ...getCurrentExpenseDate(),
+      },
+    ])
+    setExpenseDraft(null)
+    setExpenseError(null)
+  }
 
   return (
     <section className="screen">
@@ -1199,7 +1299,155 @@ function GastosScreen() {
           </div>
         </div>
       ))}
+      {expenseDraft ? (
+        <NewExpenseSheet
+          draft={expenseDraft}
+          error={expenseError}
+          onClose={() => {
+            setExpenseDraft(null)
+            setExpenseError(null)
+          }}
+          onSave={saveExpense}
+          setDraft={setExpenseDraft}
+        />
+      ) : null}
+      <button
+        aria-label="Agregar gasto"
+        className="floating-add-button green"
+        onClick={() => setExpenseDraft(createEmptyExpenseDraft())}
+        type="button"
+      >
+        +
+      </button>
     </section>
+  )
+}
+
+function NewPromoSheet({
+  draft,
+  error,
+  onClose,
+  onSave,
+  setDraft,
+}: {
+  draft: PromoDraft
+  error: string | null
+  onClose: () => void
+  onSave: () => void
+  setDraft: (draft: PromoDraft) => void
+}) {
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
+        <div className="grabber" />
+        <div className="sheet-head">
+          <div>
+            <h2>Nueva promo</h2>
+            <p>Cargá un nuevo ejemplar promocional.</p>
+          </div>
+          <button className="close-button" onClick={onClose} type="button">×</button>
+        </div>
+
+        <div className="new-sale-form">
+          <div className="edit-grid">
+            <input placeholder="Nombre" value={draft.nombre} onChange={(event) => setDraft({ ...draft, nombre: event.target.value })} />
+            <input inputMode="numeric" placeholder="Unidades" value={draft.unidades} onChange={(event) => setDraft({ ...draft, unidades: event.target.value })} />
+            <select value={draft.group} onChange={(event) => setDraft({ ...draft, group: event.target.value as PromoGroup })}>
+              <option value="equipo">Equipo</option>
+              <option value="colaboracion">Colaboración</option>
+              <option value="influencers">Influencers</option>
+            </select>
+            <DeliveredSelect value={draft.entregado} onChange={(entregado) => setDraft({ ...draft, entregado })} />
+          </div>
+          {error ? <p className="edit-error">{error}</p> : null}
+          <div className="edit-actions">
+            <button className="secondary-button" onClick={onClose} type="button">Cancelar</button>
+            <button className="primary-button red" onClick={onSave} type="button">Crear promo</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function NewExpenseSheet({
+  draft,
+  error,
+  onClose,
+  onSave,
+  setDraft,
+}: {
+  draft: ExpenseDraft
+  error: string | null
+  onClose: () => void
+  onSave: () => void
+  setDraft: (draft: ExpenseDraft) => void
+}) {
+  function updatePesos(pesos: string) {
+    const rate = parseOptionalNumber(draft.rate)
+
+    setDraft({
+      ...draft,
+      pesos,
+      usd: rate ? formatDraftNumber((parseOptionalNumber(pesos) ?? 0) / rate) : draft.usd,
+    })
+  }
+
+  function updateRate(rateValue: string) {
+    const rate = parseOptionalNumber(rateValue)
+    const pesos = parseOptionalNumber(draft.pesos)
+    const usd = parseOptionalNumber(draft.usd)
+
+    setDraft({
+      ...draft,
+      rate: rateValue,
+      pesos: rate && !pesos && usd ? formatDraftNumber(usd * rate) : draft.pesos,
+      usd: rate && pesos ? formatDraftNumber(pesos / rate) : draft.usd,
+    })
+  }
+
+  function updateUsd(usdValue: string) {
+    const rate = parseOptionalNumber(draft.rate)
+
+    setDraft({
+      ...draft,
+      usd: usdValue,
+      pesos: rate ? formatDraftNumber((parseOptionalNumber(usdValue) ?? 0) * rate) : draft.pesos,
+    })
+  }
+
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
+        <div className="grabber" />
+        <div className="sheet-head">
+          <div>
+            <h2>Nuevo gasto</h2>
+            <p>Cargá el concepto, monto y quién lo pagó.</p>
+          </div>
+          <button className="close-button" onClick={onClose} type="button">×</button>
+        </div>
+
+        <div className="new-sale-form">
+          <div className="edit-grid">
+            <input className="wide" placeholder="Concepto" value={draft.concept} onChange={(event) => setDraft({ ...draft, concept: event.target.value })} />
+            <input inputMode="decimal" placeholder="Pesos" value={draft.pesos} onChange={(event) => updatePesos(event.target.value)} />
+            <input inputMode="decimal" placeholder="Tipo de cambio" value={draft.rate} onChange={(event) => updateRate(event.target.value)} />
+            <input inputMode="decimal" placeholder="USD" value={draft.usd} onChange={(event) => updateUsd(event.target.value)} />
+            <select value={draft.payer} onChange={(event) => setDraft({ ...draft, payer: event.target.value })}>
+              <option value="Susan">Susan</option>
+              <option value="Delfi">Delfi</option>
+              <option value="Mechi">Mechi</option>
+            </select>
+          </div>
+          {error ? <p className="edit-error">{error}</p> : null}
+          <div className="edit-actions">
+            <button className="secondary-button" onClick={onClose} type="button">Cancelar</button>
+            <button className="primary-button green" onClick={onSave} type="button">Crear gasto</button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -1583,6 +1831,25 @@ function createEmptySaleDraft(): SaleDraft {
   }
 }
 
+function createEmptyPromoDraft(): PromoDraft {
+  return {
+    nombre: '',
+    unidades: '',
+    group: 'colaboracion',
+    entregado: '',
+  }
+}
+
+function createEmptyExpenseDraft(): ExpenseDraft {
+  return {
+    concept: '',
+    pesos: '',
+    rate: '',
+    usd: '',
+    payer: 'Susan',
+  }
+}
+
 function createStockAllocationDraft(allocations: StockAllocation[]): StockAllocationDraft {
   return allocations.reduce<StockAllocationDraft>((draft, allocation) => {
     draft[allocation.name] = {
@@ -1611,6 +1878,22 @@ function draftToSaleInput(draft: SaleDraft): SaleCreateInput {
 function parseStockNumber(value: string | undefined) {
   const parsed = Number(value?.trim() ?? '')
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0
+}
+
+function formatDraftNumber(value: number) {
+  if (!Number.isFinite(value)) return ''
+
+  return Number(value.toFixed(2)).toString()
+}
+
+function getCurrentExpenseDate() {
+  const date = new Date()
+  const month = new Intl.DateTimeFormat('es-AR', { month: 'long' }).format(date)
+
+  return {
+    month: month.charAt(0).toUpperCase() + month.slice(1),
+    year: date.getFullYear(),
+  }
 }
 
 async function copyTextToClipboard(text: string) {
