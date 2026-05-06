@@ -1137,6 +1137,7 @@ function NewSaleSheet({
               <option value="pendiente">Pendiente</option>
               <option value="cobrado">Cobrado</option>
             </select>
+            <InvoiceStatusSelect value={createDraft.invoiceStatus} onChange={(invoiceStatus) => setCreateDraft({ ...createDraft, invoiceStatus })} />
             <DeliveredSelect value={createDraft.delivered} onChange={(delivered) => setCreateDraft({ ...createDraft, delivered })} />
             <input className="wide" placeholder="Nota" value={createDraft.billingNotes} onChange={(event) => setCreateDraft({ ...createDraft, billingNotes: event.target.value })} />
           </div>
@@ -1205,19 +1206,31 @@ function PromocionalesScreen() {
         subtitle="Ejemplares entregados al equipo, colaboradores e influencers."
       />
       <div className="stats-row">
-        <StatCard label="Total" value={numberFormatter.format(total)} />
-        <StatCard accent="green" label="Entregados" value={numberFormatter.format(delivered)} />
-        <StatCard accent="orange" label="Pendientes" value={numberFormatter.format(total - delivered)} />
+        <button
+          className={filter === 'todos' ? 'stat-card promo-filter-card selected' : 'stat-card promo-filter-card'}
+          onClick={() => setFilter('todos')}
+          type="button"
+        >
+          <span>Total</span>
+          <strong>{numberFormatter.format(total)}</strong>
+        </button>
+        <button
+          className={filter === 'entregados' ? 'stat-card promo-filter-card selected' : 'stat-card promo-filter-card'}
+          onClick={() => setFilter('entregados')}
+          type="button"
+        >
+          <span>Entregados</span>
+          <strong className="accent-green">{numberFormatter.format(delivered)}</strong>
+        </button>
+        <button
+          className={filter === 'pendientes' ? 'stat-card promo-filter-card selected' : 'stat-card promo-filter-card'}
+          onClick={() => setFilter('pendientes')}
+          type="button"
+        >
+          <span>Pendientes</span>
+          <strong className="accent-orange">{numberFormatter.format(total - delivered)}</strong>
+        </button>
       </div>
-      <Segmented
-        active={filter}
-        options={[
-          { key: 'todos', label: 'Todos' },
-          { key: 'pendientes', label: 'Pendientes' },
-          { key: 'entregados', label: 'Entregados' },
-        ]}
-        onChange={setFilter}
-      />
       <PromoSection filter={filter} group="equipo" rows={promoRows.equipo} tag="Equipo" title="Equipo Mambula" onToggleDelivered={toggleDelivered} />
       <PromoSection filter={filter} group="colaboracion" rows={promoRows.colaboracion} tag="Colaboración" title="Colaboradores" onToggleDelivered={toggleDelivered} />
       <PromoSection filter={filter} group="influencers" rows={promoRows.influencers} tag="Influencers" title="Prensa & influencers" onToggleDelivered={toggleDelivered} />
@@ -1305,24 +1318,18 @@ function GastosScreen() {
       </div>
       <div className="payer-stats">
         {payerTotals.map((item) => (
-          <StatCard
+          <button
+            className={filter === item.payer ? 'stat-card payer-stat selected' : 'stat-card payer-stat'}
             key={item.payer}
-            label={item.payer}
-            sub={`${item.count} gastos · ${currencyArsFormatter.format(item.pesos)}`}
-            value={currencyUsdFormatter.format(item.usd)}
-          />
+            onClick={() => setFilter((current) => (current === item.payer ? 'todos' : item.payer))}
+            type="button"
+          >
+            <span>{item.payer}</span>
+            <strong>{currencyUsdFormatter.format(item.usd)}</strong>
+            <p>{item.count} gastos · {currencyArsFormatter.format(item.pesos)}</p>
+          </button>
         ))}
       </div>
-      <Segmented
-        active={filter}
-        options={[
-          { key: 'todos', label: 'Todos' },
-          { key: 'Susan', label: 'Susan' },
-          { key: 'Delfi', label: 'Delfi' },
-          { key: 'Mechi', label: 'Mechi' },
-        ]}
-        onChange={setFilter}
-      />
       {groups.map(([month, rows]) => (
         <div className="expense-group" key={month}>
           <div className="group-title">

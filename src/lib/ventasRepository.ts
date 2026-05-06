@@ -199,7 +199,12 @@ export async function loadVentasData(): Promise<VentasData> {
   const [settingsResponse, allocationsResponse, salesResponse] = await Promise.all([
     supabase.from('project_settings').select('*').limit(1).maybeSingle(),
     supabase.from('stock_allocations').select('name, copies, boxes').order('created_at'),
-    supabase.from('sales').select('*').order('sold_at', { ascending: false }),
+    supabase
+      .from('sales')
+      .select('*')
+      .order('sold_at', { ascending: false })
+      .order('created_at', { ascending: false })
+      .order('buyer', { ascending: true }),
   ])
 
   if (settingsResponse.error) {
