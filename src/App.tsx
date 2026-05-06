@@ -7,6 +7,7 @@ import {
   deleteSale,
   fallbackVentasData,
   loadVentasData,
+  updateInvoiceStatus,
   updateStockAllocations,
   updateSale,
   type SaleCreateInput,
@@ -372,19 +373,7 @@ function App() {
     try {
       setSavingInvoiceSaleId(sale.id)
       setEditError(null)
-      const updatedSale = await updateSale({
-        id: sale.id,
-        buyer: sale.buyer,
-        seller: sale.seller,
-        quantity: sale.quantity,
-        unitPriceArs: sale.unitPriceArs,
-        paidArs: sale.paidArs,
-        paymentMethod: sale.paymentMethod,
-        paymentStatus: sale.paymentStatus,
-        invoiceStatus,
-        delivered: sale.delivered ?? null,
-        billingNotes: sale.billingNotes ?? null,
-      })
+      const updatedSale = await updateInvoiceStatus(sale.id, invoiceStatus)
 
       setVentasData((current) => ({
         ...current,

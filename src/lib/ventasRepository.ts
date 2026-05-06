@@ -133,6 +133,28 @@ export async function deleteSale(id: string): Promise<void> {
   }
 }
 
+export async function updateInvoiceStatus(
+  id: string,
+  invoiceStatus: NonNullable<Sale['invoiceStatus']>,
+): Promise<Sale> {
+  if (!supabase) {
+    throw new Error('Supabase no está configurado.')
+  }
+
+  const { data, error } = await supabase
+    .from('sales')
+    .update({ invoice_status: invoiceStatus })
+    .eq('id', id)
+    .select('*')
+    .single()
+
+  if (error) {
+    throw error
+  }
+
+  return mapSale(data as SaleRow)
+}
+
 export async function updateSale(input: SaleUpdateInput): Promise<Sale> {
   if (!supabase) {
     throw new Error('Supabase no está configurado.')
