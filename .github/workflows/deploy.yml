@@ -36,6 +36,9 @@ jobs:
           VITE_SUPABASE_URL: https://qikmcqcrbzmkasxrmpoa.supabase.co
           VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_nta6gbRUlB0ZzgK0yzwquQ_ck_g52_k
 
+      - name: Add SPA fallback
+        run: cp dist/index.html dist/404.html
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:

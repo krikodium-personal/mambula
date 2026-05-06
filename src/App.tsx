@@ -66,6 +66,16 @@ const currencyUsdFormatter = new Intl.NumberFormat('es-AR', {
   maximumFractionDigits: 0,
 })
 const sellerNames = ['Delfi', 'Mechi', 'Susan', 'Abrazandocuentos']
+const appBasePath = import.meta.env.BASE_URL
+const tabRoutes: Record<AppTab, string> = {
+  home: '',
+  ventas: 'ventas',
+  promo: 'promos',
+  gastos: 'gastos',
+}
+const tabByRoute = Object.fromEntries(
+  Object.entries(tabRoutes).map(([tab, route]) => [route, tab]),
+) as Record<string, AppTab>
 
 const promoData = {
   equipo: [
@@ -154,7 +164,7 @@ const gastosData: Expense[] = [
 ]
 
 function App() {
-  const [tab, setTab] = useState<AppTab>('home')
+  const [tab, setTab] = useState<AppTab>(() => getTabFromLocation())
   const [ventasData, setVentasData] = useState<VentasData>(fallbackVentasData)
   const [loading, setLoading] = useState(isSupabaseConfigured)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -202,6 +212,18 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    function syncTabFromHistory() {
+      setTab(getTabFromLocation())
+    }
+
+    window.addEventListener('popstate', syncTabFromHistory)
+
+    return () => {
+      window.removeEventListener('popstate', syncTabFromHistory)
+    }
+  }, [])
+
   const { projectConfig, sales, stockAllocations } = ventasData
   const saleBreakdowns = sales.map((sale) => calculateSaleBreakdown(sale, projectConfig))
   const soldCopies = sales.reduce((total, sale) => total + (sale.quantity ?? 0), 0)
@@ -214,6 +236,11 @@ function App() {
   )
   const wonkyArs = saleBreakdowns.reduce((total, item) => total + item.wonkyArs, 0)
   const bookCostsUsd = saleBreakdowns.reduce((total, item) => total + item.bookCostUsd, 0)
+
+  function selectTab(nextTab: AppTab) {
+    setTab(nextTab)
+    window.history.pushState(null, '', getPathForTab(nextTab))
+  }
 
   async function copyPaymentAlias() {
     setCopyStatus('copied')
@@ -308,7 +335,7 @@ function App() {
         ...current,
         sales: [newSale, ...current.sales],
       }))
-      setTab('ventas')
+      selectTab('ventas')
       setCreateDraft(null)
       setSelectedSale(newSale)
     } catch (error) {
@@ -496,7 +523,7 @@ function App() {
         </button>
       ) : null}
 
-      <TabBar active={tab} onChange={setTab} />
+      <TabBar active={tab} onChange={selectTab} />
     </main>
   )
 }
@@ -1914,6 +1941,21 @@ function groupBy<T>(items: T[], getKey: (item: T) => string) {
   }
 
   return Array.from(groups.entries())
+}
+
+function getTabFromLocation(): AppTab {
+  const route = window.location.pathname
+    .replace(appBasePath, '')
+    .replace(/^\/+|\/+$/g, '')
+
+  return tabByRoute[route] ?? 'home'
+}
+
+function getPathForTab(tab: AppTab) {
+  const route = tabRoutes[tab]
+  const base = appBasePath.endsWith('/') ? appBasePath : `${appBasePath}/`
+
+  return route ? `${base}${route}` : base
 }
 
 function createEmptySaleDraft(): SaleDraft {
