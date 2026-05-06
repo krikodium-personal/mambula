@@ -1726,8 +1726,8 @@ function TabBar({ active, onChange }: { active: AppTab; onChange: (tab: AppTab) 
   const tabs: Array<{ key: AppTab; label: string; icon: IconName }> = [
     { key: 'home', label: 'Inicio', icon: 'home' },
     { key: 'ventas', label: 'Ventas', icon: 'bag' },
-    { key: 'promo', label: 'Promos', icon: 'chart' },
     { key: 'gastos', label: 'Gastos', icon: 'person' },
+    { key: 'promo', label: 'Promos', icon: 'chart' },
   ]
 
   return (
