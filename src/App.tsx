@@ -1352,12 +1352,28 @@ function EncargosScreen({
   sales: Sale[]
 }) {
   const [query, setQuery] = useState('')
+  const [sellerFilter, setSellerFilter] = useState<string | null>(null)
+
+  const encargoSellerStats = useMemo(() => {
+    return sellerNames
+      .filter((seller) => seller !== 'Abrazandocuentos')
+      .map((seller) => ({
+        seller,
+        count: sales.filter((sale) => sale.seller === seller).length,
+      }))
+  }, [sales])
+
+  const sellerScopedSales = useMemo(() => {
+    if (!sellerFilter) return sales
+
+    return sales.filter((sale) => sale.seller === sellerFilter)
+  }, [sales, sellerFilter])
 
   const filteredSales = useMemo(() => {
     const normalized = query.toLowerCase()
 
-    return sales.filter((sale) => sale.buyer.toLowerCase().includes(normalized))
-  }, [query, sales])
+    return sellerScopedSales.filter((sale) => sale.buyer.toLowerCase().includes(normalized))
+  }, [query, sellerScopedSales])
 
   const pendingEncargosArs = useMemo(() => {
     return sales.reduce((sum, sale) => sum + Math.max(0, getSalePending(sale)), 0)
@@ -1380,6 +1396,23 @@ function EncargosScreen({
         />
       </div>
 
+      <div className="seller-stats">
+        {encargoSellerStats.map((item) => (
+          <button
+            className={sellerFilter === item.seller ? 'stat-card seller-stat selected' : 'stat-card seller-stat'}
+            key={item.seller}
+            onClick={() => {
+              setSellerFilter((current) => (current === item.seller ? null : item.seller))
+            }}
+            type="button"
+          >
+            <span>{item.seller}</span>
+            <strong>{item.count}</strong>
+            <p>{item.count === 1 ? 'encargo' : 'encargos'}</p>
+          </button>
+        ))}
+      </div>
+
       <div className="list-group">
         {filteredSales.map((sale, index) => (
           <EncargoRow
@@ -1399,6 +1432,15 @@ function EncargosScreen({
   )
 }
 
+function EncargoSellerPill({ seller }: { seller: string }) {
+  const display = seller.trim() || 'Sin vendedor'
+  const slug = display.toLowerCase().replace(/\s+/g, '-')
+  const knownSlugs = new Set(['susan', 'delfi', 'mechi', 'abrazandocuentos', 'sin-vendedor'])
+  const payerClass = knownSlugs.has(slug) ? `payer-${slug}` : 'payer-encargo-otro'
+
+  return <span className={`payer-chip ${payerClass}`}>{display}</span>
+}
+
 function EncargoRow({
   isLast,
   onSelectSale,
@@ -1410,9 +1452,11 @@ function EncargoRow({
   onVenderEncargo: (sale: Sale) => void
   sale: Sale
 }) {
-  const qtyLabel =
+  const qtyShort =
+    sale.quantity === null || sale.quantity === undefined ? null : `x${sale.quantity}`
+  const qtyAria =
     sale.quantity === null || sale.quantity === undefined
-      ? '-'
+      ? 'Cantidad sin definir'
       : `${sale.quantity} ${sale.quantity === 1 ? 'unidad' : 'unidades'}`
 
   return (
@@ -1429,12 +1473,13 @@ function EncargoRow({
         role="button"
         tabIndex={0}
       >
-        <div className="encargo-row-text">
-          <strong>{sale.buyer}</strong>
-          <div className="sale-row-meta">
-            <span>{sale.seller ?? 'Sin vendedor'}</span>
-            <span aria-hidden="true">·</span>
-            <span>{qtyLabel}</span>
+        <div className="encargo-row-leading">
+          <span aria-label={qtyAria} className="encargo-qty-circle" title={qtyAria}>
+            {qtyShort ?? '–'}
+          </span>
+          <div className="encargo-row-copy">
+            <strong>{sale.buyer}</strong>
+            <EncargoSellerPill seller={sale.seller ?? ''} />
           </div>
         </div>
       </div>
