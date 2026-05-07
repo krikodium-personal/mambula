@@ -879,6 +879,7 @@ function HomeScreen({
   stockAllocations: VentasData['stockAllocations']
 }) {
   const [settleRow, setSettleRow] = useState<PartnerGainBreakdown | null>(null)
+  const [abrDatosOpen, setAbrDatosOpen] = useState(false)
   const [ventasMambulaNoteOpen, setVentasMambulaNoteOpen] = useState(false)
   const [editingInventory, setEditingInventory] = useState(false)
   const [stockDraft, setStockDraft] = useState<StockAllocationDraft>(() => {
@@ -1060,42 +1061,6 @@ function HomeScreen({
 
         <div className="ios-card dashboard-split-card">
           <SectionTitle eyebrow="Liquidacion" title="ABRAZANDOCUENTOS" />
-          <p className="card-note">
-            Porcentajes y stock de <strong>Abrazandocuentos</strong>. En la sección <strong>Ganancias</strong> ajustá cuántos ejemplares contás como vendidos en este esquema; los importes se calculan como unidades ×{' '}
-            {currencyArsFormatter.format(abrSplit.referenceUnitPriceArs)}.
-          </p>
-          <table className="dashboard-mini-table">
-            <tbody>
-              <tr>
-                <td>% Abrazando cuentos</td>
-                <td>{`${abrSplit.pctAbrazandoCuentos * 100}%`}</td>
-              </tr>
-              <tr>
-                <td>% Wonky</td>
-                <td>{`${abrSplit.pctWonky * 100}%`}</td>
-              </tr>
-              <tr>
-                <td>% Socias (pool)</td>
-                <td>{`${abrSplit.pctSociasPool * 100}%`}</td>
-              </tr>
-              <tr>
-                <td>Costo por libro</td>
-                <td>{currencyUsdFormatter.format(abrSplit.costoLibroUsd)}</td>
-              </tr>
-              <tr>
-                <td>Ejemplares (stock)</td>
-                <td>{numberFormatter.format(abrSplit.acCopies)}</td>
-              </tr>
-              <tr>
-                <td>Cajas (stock)</td>
-                <td>{numberFormatter.format(abrSplit.acBoxes)}</td>
-              </tr>
-              <tr>
-                <td>Precio venta referencia</td>
-                <td>{currencyArsFormatter.format(abrSplit.referenceUnitPriceArs)}</td>
-              </tr>
-            </tbody>
-          </table>
 
           <h4 className="dashboard-ganancias-subtitle">
             <span>Ganancias:</span>
@@ -1155,6 +1120,67 @@ function HomeScreen({
               </tr>
             </tbody>
           </table>
+
+          <div className="dashboard-disclosure">
+            <button
+              aria-controls="abr-datos-panel"
+              aria-expanded={abrDatosOpen}
+              className="dashboard-disclosure-trigger"
+              id="abr-datos-trigger"
+              onClick={() => {
+                setAbrDatosOpen((open) => !open)
+              }}
+              type="button"
+            >
+              <span className="dashboard-disclosure-title">Valores</span>
+              <span
+                aria-hidden
+                className={abrDatosOpen ? 'dashboard-disclosure-chevron is-open' : 'dashboard-disclosure-chevron'}
+              >
+                <Icon name="chevron-down" />
+              </span>
+            </button>
+            <div
+              className="dashboard-disclosure-panel"
+              hidden={!abrDatosOpen}
+              id="abr-datos-panel"
+              role="region"
+              aria-labelledby="abr-datos-trigger"
+            >
+              <table className="dashboard-mini-table">
+                <tbody>
+                  <tr>
+                    <td>% Abrazando cuentos</td>
+                    <td>{`${abrSplit.pctAbrazandoCuentos * 100}%`}</td>
+                  </tr>
+                  <tr>
+                    <td>% Wonky</td>
+                    <td>{`${abrSplit.pctWonky * 100}%`}</td>
+                  </tr>
+                  <tr>
+                    <td>% Socias (pool)</td>
+                    <td>{`${abrSplit.pctSociasPool * 100}%`}</td>
+                  </tr>
+                  <tr>
+                    <td>Costo por libro</td>
+                    <td>{currencyUsdFormatter.format(abrSplit.costoLibroUsd)}</td>
+                  </tr>
+                  <tr>
+                    <td>Ejemplares (stock)</td>
+                    <td>{numberFormatter.format(abrSplit.acCopies)}</td>
+                  </tr>
+                  <tr>
+                    <td>Cajas (stock)</td>
+                    <td>{numberFormatter.format(abrSplit.acBoxes)}</td>
+                  </tr>
+                  <tr>
+                    <td>Precio venta referencia</td>
+                    <td>{currencyArsFormatter.format(abrSplit.referenceUnitPriceArs)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
 
         <LiquidacionesVentasCard
@@ -1182,7 +1208,7 @@ function HomeScreen({
           wonkyPorLibroArs={WONKY_ARS_PER_VENTA_COPY}
         />
         {partnerSettlements.length > 0 ? (
-          <div className="ios-card liquidaciones-settlements-follow">
+          <div className="ios-card">
             <div className="settlement-history-block settlement-history-block--flush">
               <h4>Movimientos de saldo</h4>
               <ul className="settlement-history-list">
@@ -2733,7 +2759,7 @@ function PayerChip({ name }: { name: string }) {
   return <span className={`payer-chip payer-${name.toLowerCase()}`}>{name}</span>
 }
 
-type IconName = 'search' | 'chart' | 'home' | 'bag' | 'person' | 'package'
+type IconName = 'search' | 'chart' | 'home' | 'bag' | 'person' | 'package' | 'chevron-down'
 
 function Icon({ name }: { name: IconName }) {
   const paths = {
@@ -2742,6 +2768,7 @@ function Icon({ name }: { name: IconName }) {
     home: <><path d="M3 12 12 3l9 9" /><path d="M5 10v10h14V10" /></>,
     bag: <><path d="M6 8h12l-1 13H7L6 8Z" /><path d="M9 8a3 3 0 0 1 6 0" /></>,
     person: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
+    'chevron-down': <path d="m6 9 6 6 6-6" />,
     package: (
       <>
         <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
