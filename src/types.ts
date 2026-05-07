@@ -32,7 +32,7 @@ export type Sale = {
   paidArs: number
   paymentMethod: 'transferencia' | 'efectivo' | 'otro'
   paymentStatus: 'pendiente' | 'cobrado'
-  invoiceStatus?: 'facturado' | 'no_facturado' | 'pendiente' | 'no_aplica'
+  invoiceStatus?: 'facturado' | 'pendiente' | 'no_aplica'
   delivered?: string | null
   billingNotes?: string | null
 }
@@ -42,4 +42,22 @@ export type SaleBreakdown = {
   abrazandoCuentosArs: number
   wonkyArs: number
   bookCostUsd: number
+}
+
+export type SplitPartnerKey = 'Delfi' | 'Mechi' | 'Susan' | 'Wonky'
+
+export type PartnerSettlement = {
+  id: string
+  partner: SplitPartnerKey
+  amountArs: number
+  settledOn: string
+  createdAt: string
+}
+
+export type PartnerGainBreakdown = {
+  partner: SplitPartnerKey
+  totalGainArs: number
+  fromVentasArs: number
+  fromAbrazandoPoolArs: number
+  wonkyIllustratorUsd?: number
 }

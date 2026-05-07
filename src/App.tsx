@@ -1,22 +1,35 @@
 import './App.css'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  computeAbrazandoGananciasFromUnits,
+  computeAbrInventorySplit,
+  computeVentasMambulaSplits,
+  settlementsTotalForPartner,
+  AC_STOCK_NAME,
+  WONKY_ARS_PER_VENTA_COPY,
+  type AbrInventorySplit,
+  type AbrazandoGananciasPreview,
+} from './data/partnerSplits'
 import { calculateSaleBreakdown } from './data/ventas'
+import LiquidacionesVentasCard from './components/LiquidacionesVentasCard'
 import { isSupabaseConfigured } from './lib/supabase'
+import { createPartnerSettlement, loadPartnerSettlements } from './lib/partnerSettlementsRepository'
 import {
   createSale,
   deleteSale,
   fallbackVentasData,
   loadVentasData,
   updateInvoiceStatus,
+  updateAcSchemeSoldUnits,
   updateStockAllocations,
   updateSale,
   type SaleCreateInput,
   type SaleUpdateInput,
   type VentasData,
 } from './lib/ventasRepository'
-import type { Sale, StockAllocation } from './types'
+import type { PartnerGainBreakdown, PartnerSettlement, Sale, SplitPartnerKey, StockAllocation } from './types'
 
-type AppTab = 'home' | 'ventas' | 'promo' | 'gastos'
+type AppTab = 'home' | 'ventas' | 'encargos' | 'promo' | 'gastos'
 type SaleDraft = {
   buyer: string
   seller: string
@@ -70,6 +83,7 @@ const appBasePath = import.meta.env.BASE_URL
 const tabRoutes: Record<AppTab, string> = {
   home: '',
   ventas: 'ventas',
+  encargos: 'encargos',
   promo: 'promos',
   gastos: 'gastos',
 }
@@ -120,6 +134,7 @@ const promoData = {
     { nombre: 'Diego Torres', unidades: 0, entregado: false },
     { nombre: 'Dai Ruggeri', unidades: 0, entregado: false },
   ],
+  colegio: [],
 }
 
 const gastosData: Expense[] = [
@@ -166,15 +181,24 @@ const gastosData: Expense[] = [
 function App() {
   const [tab, setTab] = useState<AppTab>(() => getTabFromLocation())
   const [ventasData, setVentasData] = useState<VentasData>(fallbackVentasData)
+  const [partnerSettlements, setPartnerSettlements] = useState<PartnerSettlement[]>([])
+  const [acSchemeSoldQty, setAcSchemeSoldQty] = useState(0)
+  const [acSliderPersistStatus, setAcSliderPersistStatus] = useState<
+    'idle' | 'saving' | 'saved' | 'error'
+  >('idle')
+  const acSliderPersistClearRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [loading, setLoading] = useState(isSupabaseConfigured)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null)
+  const [saleDetailEncargoSummary, setSaleDetailEncargoSummary] = useState(false)
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null)
   const [saleDraft, setSaleDraft] = useState<SaleDraft | null>(null)
   const [savingSaleId, setSavingSaleId] = useState<string | null>(null)
   const [editError, setEditError] = useState<string | null>(null)
   const [createDraft, setCreateDraft] = useState<SaleDraft | null>(null)
+  const [newSaleSheetVariant, setNewSaleSheetVariant] = useState<'venta' | 'encargo'>('venta')
+  const [saleDraftPresentation, setSaleDraftPresentation] = useState<'default' | 'encargoVender'>('default')
   const [savingNewSale, setSavingNewSale] = useState(false)
   const [deletingSaleId, setDeletingSaleId] = useState<string | null>(null)
   const [savingStockAllocations, setSavingStockAllocations] = useState(false)
@@ -191,7 +215,14 @@ function App() {
         const data = await loadVentasData()
 
         if (!ignore) {
+          const maxAc =
+            data.stockAllocations.find((a) => a.name === AC_STOCK_NAME)?.copies ?? 0
+          const saved = data.acSchemeSoldUnits
+          const initial =
+            saved === null ? maxAc : Math.min(Math.max(0, saved), maxAc)
+
           setVentasData(data)
+          setAcSchemeSoldQty(initial)
           setLoadError(null)
         }
       } catch (error) {
@@ -206,6 +237,26 @@ function App() {
     }
 
     fetchVentasData()
+
+    return () => {
+      ignore = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let ignore = false
+
+    loadPartnerSettlements()
+      .then((rows) => {
+        if (!ignore) {
+          setPartnerSettlements(rows)
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setPartnerSettlements([])
+        }
+      })
 
     return () => {
       ignore = true
@@ -228,14 +279,98 @@ function App() {
   const saleBreakdowns = sales.map((sale) => calculateSaleBreakdown(sale, projectConfig))
   const soldCopies = sales.reduce((total, sale) => total + (sale.quantity ?? 0), 0)
   const grossSalesArs = saleBreakdowns.reduce((total, item) => total + item.grossArs, 0)
-  const paidSalesArs = sales.reduce((total, sale) => total + sale.paidArs, 0)
-  const pendingSalesArs = grossSalesArs - paidSalesArs
-  const abrazandoCuentosArs = saleBreakdowns.reduce(
-    (total, item) => total + item.abrazandoCuentosArs,
-    0,
+
+  const ventasTabSales = useMemo(() => sales.filter((sale) => !isEncargoSale(sale)), [sales])
+  const encargoSales = useMemo(() => sales.filter(isEncargoSale), [sales])
+  const ventasTabBreakdowns = useMemo(
+    () => ventasTabSales.map((sale) => calculateSaleBreakdown(sale, projectConfig)),
+    [ventasTabSales, projectConfig],
   )
-  const wonkyArs = saleBreakdowns.reduce((total, item) => total + item.wonkyArs, 0)
-  const bookCostsUsd = saleBreakdowns.reduce((total, item) => total + item.bookCostUsd, 0)
+  const ventasTabGrossArs = ventasTabBreakdowns.reduce((total, item) => total + item.grossArs, 0)
+  const ventasTabPaidArs = ventasTabSales.reduce((total, sale) => total + sale.paidArs, 0)
+  const ventasTabPendingArs = ventasTabGrossArs - ventasTabPaidArs
+
+  const abrSplit = useMemo(
+    () => computeAbrInventorySplit(stockAllocations, projectConfig.costRules),
+    [stockAllocations, projectConfig.costRules],
+  )
+
+  useEffect(() => {
+    const max = abrSplit.acCopies
+    setAcSchemeSoldQty((prev) => Math.min(prev, max))
+  }, [abrSplit.acCopies])
+
+  useEffect(() => {
+    return () => {
+      if (acSliderPersistClearRef.current) {
+        window.clearTimeout(acSliderPersistClearRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (loading || loadError) {
+      return
+    }
+
+    const max = abrSplit.acCopies
+    const clamped = Math.min(Math.max(0, acSchemeSoldQty), max)
+    const saved = ventasData.acSchemeSoldUnits
+    const equivalent = saved !== null ? saved === clamped : clamped === max
+
+    if (equivalent) {
+      return
+    }
+
+    const handle = window.setTimeout(() => {
+      if (acSliderPersistClearRef.current) {
+        window.clearTimeout(acSliderPersistClearRef.current)
+        acSliderPersistClearRef.current = null
+      }
+
+      setAcSliderPersistStatus('saving')
+
+      void updateAcSchemeSoldUnits(clamped)
+        .then(() => {
+          setVentasData((current) => ({ ...current, acSchemeSoldUnits: clamped }))
+          setAcSliderPersistStatus('saved')
+          acSliderPersistClearRef.current = window.setTimeout(() => {
+            setAcSliderPersistStatus('idle')
+            acSliderPersistClearRef.current = null
+          }, 2800)
+        })
+        .catch((error) => {
+          console.error(error)
+          setAcSliderPersistStatus('error')
+        })
+    }, 400)
+
+    return () => window.clearTimeout(handle)
+  }, [acSchemeSoldQty, loading, loadError, abrSplit.acCopies, ventasData.acSchemeSoldUnits])
+
+  const acSliderGains = useMemo(
+    () =>
+      computeAbrazandoGananciasFromUnits(
+        acSchemeSoldQty,
+        projectConfig.costRules,
+        abrSplit.referenceUnitPriceArs,
+      ),
+    [abrSplit.referenceUnitPriceArs, acSchemeSoldQty, projectConfig.costRules],
+  )
+
+  const partnerGainRows = useMemo(
+    () => computeVentasMambulaSplits(grossSalesArs, soldCopies),
+    [grossSalesArs, soldCopies],
+  )
+
+  async function savePartnerSettlement(input: {
+    partner: SplitPartnerKey
+    amountArs: number
+    settledOn: string
+  }) {
+    const row = await createPartnerSettlement(input)
+    setPartnerSettlements((current) => [row, ...current])
+  }
 
   function selectTab(nextTab: AppTab) {
     setTab(nextTab)
@@ -255,30 +390,59 @@ function App() {
   }
 
   function startEditingSale(sale: Sale) {
+    setCreateDraft(null)
+    setSaleDraftPresentation('default')
     setEditingSaleId(sale.id)
     setEditError(null)
-    setSaleDraft({
-      buyer: sale.buyer,
-      seller: sale.seller ?? '',
-      quantity: sale.quantity?.toString() ?? '',
-      unitPriceArs: sale.unitPriceArs?.toString() ?? '',
-      paidArs: sale.paidArs.toString(),
-      paymentMethod: sale.paymentMethod,
-      paymentStatus: sale.paymentStatus,
-      invoiceStatus: sale.invoiceStatus ?? 'no_aplica',
-      delivered: sale.delivered ?? '',
-      billingNotes: sale.billingNotes ?? '',
-    })
+    setSaleDraft(saleToDraft(sale))
+  }
+
+  function openEncargoVenderSheet(sale: Sale) {
+    setCreateDraft(null)
+    setEditError(null)
+    setSelectedSale(sale)
+    setSaleDetailEncargoSummary(true)
+    setSaleDraftPresentation('encargoVender')
+    setEditingSaleId(sale.id)
+    setSaleDraft(saleToDraft(sale))
   }
 
   function cancelEditingSale() {
     setEditingSaleId(null)
     setSaleDraft(null)
     setEditError(null)
+    setSaleDraftPresentation('default')
+  }
+
+  function closeSaleDetail() {
+    setSelectedSale(null)
+    setSaleDetailEncargoSummary(false)
+    cancelEditingSale()
+  }
+
+  function handleSelectSaleFromVentas(sale: Sale) {
+    setSaleDetailEncargoSummary(false)
+    setSelectedSale(sale)
+  }
+
+  function handleSelectSaleFromEncargosList(sale: Sale) {
+    setSaleDetailEncargoSummary(true)
+    setSelectedSale(sale)
   }
 
   async function saveEditingSale(saleId: string) {
     if (!saleDraft) return
+
+    if (!saleDraft.buyer.trim()) {
+      setEditError('Completá el nombre del comprador.')
+      return
+    }
+
+    const cobradoErr = cobradoPaidValidationError(saleDraft)
+    if (cobradoErr) {
+      setEditError(cobradoErr)
+      return
+    }
 
     const input: SaleUpdateInput = {
       id: saleId,
@@ -303,6 +467,9 @@ function App() {
         sales: current.sales.map((sale) => (sale.id === saleId ? updatedSale : sale)),
       }))
       setSelectedSale(updatedSale)
+      if (!isEncargoSale(updatedSale)) {
+        setSaleDetailEncargoSummary(false)
+      }
       cancelEditingSale()
     } catch (error) {
       setEditError(error instanceof Error ? error.message : 'No se pudo guardar la venta.')
@@ -313,6 +480,8 @@ function App() {
 
   function handleCreateSale() {
     setEditError(null)
+    cancelEditingSale()
+    setNewSaleSheetVariant(tab === 'encargos' ? 'encargo' : 'venta')
     setCreateDraft(createEmptySaleDraft())
   }
 
@@ -326,6 +495,20 @@ function App() {
       return
     }
 
+    if (newSaleSheetVariant === 'encargo') {
+      const qty = parseOptionalNumber(createDraft.quantity)
+      if (qty === null || qty <= 0) {
+        setEditError('Completá la cantidad de unidades (mayor a cero).')
+        return
+      }
+    }
+
+    const cobradoErr = cobradoPaidValidationError(createDraft)
+    if (cobradoErr) {
+      setEditError(cobradoErr)
+      return
+    }
+
     try {
       setSavingNewSale(true)
       setEditError(null)
@@ -335,8 +518,9 @@ function App() {
         ...current,
         sales: [newSale, ...current.sales],
       }))
-      selectTab('ventas')
+      selectTab(isEncargoSale(newSale) ? 'encargos' : 'ventas')
       setCreateDraft(null)
+      setSaleDetailEncargoSummary(isEncargoSale(newSale))
       setSelectedSale(newSale)
     } catch (error) {
       setEditError(error instanceof Error ? error.message : 'No se pudo crear la venta.')
@@ -356,6 +540,7 @@ function App() {
         sales: current.sales.filter((item) => item.id !== sale.id),
       }))
       setSelectedSale(null)
+      setSaleDetailEncargoSummary(false)
       cancelEditingSale()
     } catch (error) {
       setEditError(error instanceof Error ? error.message : 'No se pudo eliminar la venta.')
@@ -379,7 +564,7 @@ function App() {
         paidArs: sale.paidArs,
         paymentMethod: sale.paymentMethod,
         paymentStatus: sale.paymentStatus,
-        invoiceStatus: sale.invoiceStatus ?? 'no_aplica',
+        invoiceStatus: sale.invoiceStatus ?? 'pendiente',
         delivered: nextDelivered,
         billingNotes: sale.billingNotes ?? null,
       })
@@ -435,88 +620,111 @@ function App() {
     }
   }
 
+  const saleEditSheetOpen = Boolean(
+    selectedSale && editingSaleId && saleDraft && selectedSale.id === editingSaleId && !createDraft,
+  )
+
   return (
     <main className="ios-app">
       {tab === 'home' ? (
         <HomeScreen
-          abrazandoCuentosArs={abrazandoCuentosArs}
-          bookCostsUsd={bookCostsUsd}
+          abrSplit={abrSplit}
+          acSchemeSoldQty={acSchemeSoldQty}
+          acSliderPersistStatus={acSliderPersistStatus}
+          acSliderGains={acSliderGains}
           copyPaymentAlias={copyPaymentAlias}
           copyStatus={copyStatus}
           grossSalesArs={grossSalesArs}
           loadError={loadError}
           loading={loading}
+          onAcSchemeSoldQtyChange={setAcSchemeSoldQty}
+          partnerGainRows={partnerGainRows}
+          partnerSettlements={partnerSettlements}
           projectConfig={projectConfig}
+          savePartnerSettlement={savePartnerSettlement}
           saveStockAllocationChanges={saveStockAllocationChanges}
           savingStockAllocations={savingStockAllocations}
           soldCopies={soldCopies}
           stockAllocationError={stockAllocationError}
           stockAllocations={stockAllocations}
-          wonkyArs={wonkyArs}
         />
       ) : null}
       {tab === 'ventas' ? (
         <VentasScreen
-          editError={editError}
-          editingSaleId={editingSaleId}
-          grossSalesArs={grossSalesArs}
-          paidSalesArs={paidSalesArs}
-          pendingSalesArs={pendingSalesArs}
-          saleDraft={saleDraft}
-          sales={sales}
-          savingSaleId={savingSaleId}
+          grossSalesArs={ventasTabGrossArs}
+          paidSalesArs={ventasTabPaidArs}
+          pendingSalesArs={ventasTabPendingArs}
+          sales={ventasTabSales}
           togglingDeliveryId={togglingDeliveryId}
-          cancelEditingSale={cancelEditingSale}
-          saveEditingSale={saveEditingSale}
-          setSaleDraft={setSaleDraft}
-          onSelectSale={setSelectedSale}
+          onSelectSale={handleSelectSaleFromVentas}
           onToggleDelivered={toggleSaleDelivered}
+        />
+      ) : null}
+      {tab === 'encargos' ? (
+        <EncargosScreen
+          sales={encargoSales}
+          onSelectSale={handleSelectSaleFromEncargosList}
+          onVenderEncargo={openEncargoVenderSheet}
         />
       ) : null}
       {tab === 'promo' ? <PromocionalesScreen /> : null}
       {tab === 'gastos' ? <GastosScreen /> : null}
 
-      {selectedSale ? (
-        <SaleDetailSheet
-          editError={editError}
-          editingSaleId={editingSaleId}
-          sale={selectedSale}
-          saleDraft={saleDraft}
-          savingSaleId={savingSaleId}
-          savingInvoice={savingInvoiceSaleId === selectedSale.id}
-          togglingDelivery={togglingDeliveryId === selectedSale.id}
-          cancelEditingSale={cancelEditingSale}
-          onClose={() => {
-            setSelectedSale(null)
-            cancelEditingSale()
-          }}
-          deleting={deletingSaleId === selectedSale.id}
-          deleteSale={handleDeleteSale}
-          onToggleDelivered={toggleSaleDelivered}
-          saveEditingSale={saveEditingSale}
-          setSaleDraft={setSaleDraft}
-          startEditingSale={startEditingSale}
-          updateInvoiceStatus={updateSaleInvoiceStatus}
-        />
+      {selectedSale && !saleEditSheetOpen ? (
+        saleDetailEncargoSummary ? (
+          <EncargoSummarySheet
+            sale={selectedSale}
+            onClose={closeSaleDetail}
+            onVender={openEncargoVenderSheet}
+          />
+        ) : (
+          <SaleDetailSheet
+            editError={editError}
+            sale={selectedSale}
+            savingInvoice={savingInvoiceSaleId === selectedSale.id}
+            togglingDelivery={togglingDeliveryId === selectedSale.id}
+            onClose={closeSaleDetail}
+            deleting={deletingSaleId === selectedSale.id}
+            deleteSale={handleDeleteSale}
+            onToggleDelivered={toggleSaleDelivered}
+            startEditingSale={startEditingSale}
+            updateInvoiceStatus={updateSaleInvoiceStatus}
+          />
+        )
       ) : null}
 
       {createDraft ? (
-        <NewSaleSheet
-          createDraft={createDraft}
+        <SaleDraftSheet
+          draft={createDraft}
           editError={editError}
-          saving={savingNewSale}
+          mode="create"
+          submitting={savingNewSale}
+          createVariant={newSaleSheetVariant}
           onClose={() => {
             setCreateDraft(null)
             setEditError(null)
           }}
-          saveNewSale={saveNewSale}
-          setCreateDraft={setCreateDraft}
+          onSubmit={saveNewSale}
+          setDraft={setCreateDraft}
         />
       ) : null}
 
-      {tab === 'home' || tab === 'ventas' ? (
+      {saleEditSheetOpen && selectedSale && editingSaleId && saleDraft ? (
+        <SaleDraftSheet
+          draft={saleDraft}
+          editError={editError}
+          mode="edit"
+          presentation={saleDraftPresentation}
+          submitting={savingSaleId === editingSaleId}
+          onClose={cancelEditingSale}
+          onSubmit={() => saveEditingSale(editingSaleId)}
+          setDraft={setSaleDraft}
+        />
+      ) : null}
+
+      {tab === 'home' || tab === 'ventas' || tab === 'encargos' ? (
         <button
-          aria-label="Agregar venta"
+          aria-label={tab === 'encargos' ? 'Agregar encargo' : 'Agregar venta'}
           className="floating-add-button"
           onClick={handleCreateSale}
           type="button"
@@ -530,37 +738,148 @@ function App() {
   )
 }
 
+function PartnerSettlementSheet({
+  breakdown,
+  onClose,
+  onSubmit,
+  partnerSettlements,
+}: {
+  breakdown: PartnerGainBreakdown
+  partnerSettlements: PartnerSettlement[]
+  onClose: () => void
+  onSubmit: (amountArs: number, settledOn: string) => Promise<void>
+}) {
+  const settledTotal = settlementsTotalForPartner(partnerSettlements, breakdown.partner)
+  const pendingArs = Math.max(0, breakdown.totalGainArs - settledTotal)
+  const [amount, setAmount] = useState(() => (pendingArs > 0 ? String(Math.round(pendingArs)) : ''))
+  const [dateStr, setDateStr] = useState(() => new Date().toISOString().slice(0, 10))
+  const [localError, setLocalError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  async function handleSave() {
+    const amt = parseOptionalNumber(amount)
+    if (amt === null || amt <= 0) {
+      setLocalError('Ingresá un monto válido.')
+      return
+    }
+
+    if (amt > pendingArs + 0.005) {
+      setLocalError('El monto no puede superar lo pendiente.')
+      return
+    }
+
+    if (!dateStr) {
+      setLocalError('Elegí una fecha.')
+      return
+    }
+
+    try {
+      setSubmitting(true)
+      setLocalError(null)
+      await onSubmit(amt, dateStr)
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : 'No se pudo registrar el saldo.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
+        <div className="grabber" />
+        <div className="sheet-head">
+          <div>
+            <h2>Saldar cuenta</h2>
+            <p>{breakdown.partner}</p>
+          </div>
+          <button className="close-button" onClick={onClose} type="button">×</button>
+        </div>
+
+        <div className="new-sale-form">
+          <div className="settlement-summary">
+            <div className="sheet-list-item">
+              <span>Ganancia total</span>
+              <strong>{currencyArsFormatter.format(breakdown.totalGainArs)}</strong>
+            </div>
+            <div className="sheet-list-item">
+              <span>Ya saldado</span>
+              <strong>{currencyArsFormatter.format(settledTotal)}</strong>
+            </div>
+            <div className="sheet-list-item">
+              <span>Pendiente</span>
+              <strong>{currencyArsFormatter.format(pendingArs)}</strong>
+            </div>
+          </div>
+          {breakdown.wonkyIllustratorUsd !== undefined ? (
+            <p className="card-note">
+              Incluye ilustración estimada {currencyUsdFormatter.format(breakdown.wonkyIllustratorUsd)} USD · tipo de cambio referencial.
+            </p>
+          ) : null}
+          <div className="edit-grid">
+            <input inputMode="decimal" placeholder="Monto a saldar (ARS)" value={amount} onChange={(event) => setAmount(event.target.value)} />
+            <input type="date" value={dateStr} onChange={(event) => setDateStr(event.target.value)} />
+          </div>
+          {localError ? <p className="edit-error">{localError}</p> : null}
+          <div className="edit-actions">
+            <button className="secondary-button" disabled={submitting} onClick={onClose} type="button">Cancelar</button>
+            <button className="primary-button" disabled={submitting || pendingArs <= 0} onClick={() => void handleSave()} type="button">
+              {submitting ? 'Guardando...' : 'Registrar saldo'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function HomeScreen({
-  abrazandoCuentosArs,
-  bookCostsUsd,
+  abrSplit,
+  acSchemeSoldQty,
+  acSliderPersistStatus,
+  acSliderGains,
   copyPaymentAlias,
   copyStatus,
   grossSalesArs,
   loadError,
   loading,
+  onAcSchemeSoldQtyChange,
+  partnerGainRows,
+  partnerSettlements,
   projectConfig,
+  savePartnerSettlement,
   saveStockAllocationChanges,
   savingStockAllocations,
   soldCopies,
   stockAllocationError,
   stockAllocations,
-  wonkyArs,
 }: {
-  abrazandoCuentosArs: number
-  bookCostsUsd: number
+  abrSplit: AbrInventorySplit
+  acSchemeSoldQty: number
+  acSliderPersistStatus: 'idle' | 'saving' | 'saved' | 'error'
+  acSliderGains: AbrazandoGananciasPreview
   copyPaymentAlias: () => void
   copyStatus: 'idle' | 'copied' | 'error'
   grossSalesArs: number
   loadError: string | null
   loading: boolean
+  onAcSchemeSoldQtyChange: (units: number) => void
+  partnerGainRows: PartnerGainBreakdown[]
+  partnerSettlements: PartnerSettlement[]
   projectConfig: VentasData['projectConfig']
+  savePartnerSettlement: (input: {
+    partner: SplitPartnerKey
+    amountArs: number
+    settledOn: string
+  }) => Promise<void>
   saveStockAllocationChanges: (allocations: StockAllocation[]) => Promise<void>
   savingStockAllocations: boolean
   soldCopies: number
   stockAllocationError: string | null
   stockAllocations: VentasData['stockAllocations']
-  wonkyArs: number
 }) {
+  const [settleRow, setSettleRow] = useState<PartnerGainBreakdown | null>(null)
+  const [ventasMambulaNoteOpen, setVentasMambulaNoteOpen] = useState(false)
   const [editingInventory, setEditingInventory] = useState(false)
   const [stockDraft, setStockDraft] = useState<StockAllocationDraft>(() => {
     return createStockAllocationDraft(stockAllocations)
@@ -570,6 +889,22 @@ function HomeScreen({
   const copiesPerBox = projectConfig.firstPrintRun.copies / projectConfig.firstPrintRun.boxes
   const allocatedCopies = stockAllocations.reduce((total, item) => total + item.copies, 0)
   const inventoryError = localStockError ?? stockAllocationError
+  const acSliderMax = Math.max(0, abrSplit.acCopies)
+  const sliderValue = Math.min(Math.max(0, acSchemeSoldQty), acSliderMax)
+
+  const liquidacionesParticipantes = useMemo(
+    () =>
+      partnerGainRows.map((row) => {
+        const saldado = settlementsTotalForPartner(partnerSettlements, row.partner)
+        return {
+          nombre: row.partner,
+          ganancia: row.totalGainArs,
+          saldado,
+          pendiente: Math.max(0, row.totalGainArs - saldado),
+        }
+      }),
+    [partnerGainRows, partnerSettlements],
+  )
 
   function startEditingInventory() {
     setStockDraft(createStockAllocationDraft(stockAllocations))
@@ -723,50 +1058,182 @@ function HomeScreen({
           ) : null}
         </div>
 
-        <div className="ios-card">
-          <SectionTitle eyebrow="Reglas" title="Costos asociados a cada venta" />
-          <RuleRow label="Abrazando cuentos" value={`${projectConfig.costRules.abrazandoCuentosShare * 100}%`} />
-          <RuleRow label="Wonky" value={`${projectConfig.costRules.wonkyShare * 100}%`} />
-          <RuleRow label="Costo por libro" value={currencyUsdFormatter.format(projectConfig.costRules.bookCostUsd)} />
-          <p className="card-note">Totales calculados con ventas cargadas</p>
-          <RuleRow label="Abrazando cuentos" value={currencyArsFormatter.format(abrazandoCuentosArs)} />
-          <RuleRow label="Wonky" value={currencyArsFormatter.format(wonkyArs)} />
-          <RuleRow label="Costo libros" value={currencyUsdFormatter.format(bookCostsUsd)} />
+        <div className="ios-card dashboard-split-card">
+          <SectionTitle eyebrow="Liquidacion" title="ABRAZANDOCUENTOS" />
+          <p className="card-note">
+            Porcentajes y stock de <strong>Abrazandocuentos</strong>. En la sección <strong>Ganancias</strong> ajustá cuántos ejemplares contás como vendidos en este esquema; los importes se calculan como unidades ×{' '}
+            {currencyArsFormatter.format(abrSplit.referenceUnitPriceArs)}.
+          </p>
+          <table className="dashboard-mini-table">
+            <tbody>
+              <tr>
+                <td>% Abrazando cuentos</td>
+                <td>{`${abrSplit.pctAbrazandoCuentos * 100}%`}</td>
+              </tr>
+              <tr>
+                <td>% Wonky</td>
+                <td>{`${abrSplit.pctWonky * 100}%`}</td>
+              </tr>
+              <tr>
+                <td>% Socias (pool)</td>
+                <td>{`${abrSplit.pctSociasPool * 100}%`}</td>
+              </tr>
+              <tr>
+                <td>Costo por libro</td>
+                <td>{currencyUsdFormatter.format(abrSplit.costoLibroUsd)}</td>
+              </tr>
+              <tr>
+                <td>Ejemplares (stock)</td>
+                <td>{numberFormatter.format(abrSplit.acCopies)}</td>
+              </tr>
+              <tr>
+                <td>Cajas (stock)</td>
+                <td>{numberFormatter.format(abrSplit.acBoxes)}</td>
+              </tr>
+              <tr>
+                <td>Precio venta referencia</td>
+                <td>{currencyArsFormatter.format(abrSplit.referenceUnitPriceArs)}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h4 className="dashboard-ganancias-subtitle">
+            <span>Ganancias:</span>
+            {acSliderPersistStatus === 'saving' ? (
+              <span className="ac-slider-persist-badge muted">Guardando...</span>
+            ) : null}
+            {acSliderPersistStatus === 'saved' ? (
+              <span className="ac-slider-persist-badge success">Guardado</span>
+            ) : null}
+            {acSliderPersistStatus === 'error' ? (
+              <span className="ac-slider-persist-badge danger">No se pudo guardar</span>
+            ) : null}
+          </h4>
+          <div className="ac-scheme-slider-block">
+            <label className="ac-scheme-slider-label" htmlFor="ac-scheme-slider">
+              Ejemplares vendidos en este esquema:{' '}
+              <strong>{numberFormatter.format(sliderValue)}</strong>
+              {' · máx. '}
+              <strong>{numberFormatter.format(acSliderMax)}</strong>
+            </label>
+            <input
+              aria-valuemax={acSliderMax}
+              aria-valuemin={0}
+              aria-valuenow={sliderValue}
+              className="ac-scheme-slider"
+              disabled={acSliderMax <= 0}
+              id="ac-scheme-slider"
+              max={acSliderMax}
+              min={0}
+              onChange={(event) => onAcSchemeSoldQtyChange(Number(event.target.value))}
+              step={1}
+              type="range"
+              value={sliderValue}
+            />
+          </div>
+          <table className="dashboard-mini-table">
+            <tbody>
+              <tr>
+                <td>Ingreso referencial</td>
+                <td>{currencyArsFormatter.format(acSliderGains.poolGrossArs)}</td>
+              </tr>
+              <tr>
+                <td>Ganancia Abrazando cuentos</td>
+                <td>{currencyArsFormatter.format(acSliderGains.gananciaAbrazandoCuentosArs)}</td>
+              </tr>
+              <tr>
+                <td>Ganancia Wonky (pool)</td>
+                <td>{currencyArsFormatter.format(acSliderGains.gananciaWonkyArs)}</td>
+              </tr>
+              <tr>
+                <td>Pool Socias (Delfi, Mechi, Susan)</td>
+                <td>{currencyArsFormatter.format(acSliderGains.poolSociasArs)}</td>
+              </tr>
+              <tr>
+                <td>Cada socia (share AC)</td>
+                <td>{currencyArsFormatter.format(acSliderGains.gananciaPorSociaAcArs)}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
+
+        <LiquidacionesVentasCard
+          explainDetail={
+            <>
+              Bruto por venta = ejemplares × precio unitario. Wonky suma{' '}
+              {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY)} por cada ejemplar vendido en total (
+              {numberFormatter.format(soldCopies)} u.). Del bruto total se descuenta ese monto y lo restante se divide
+              en tres entre las socias. <strong>Abrazandocuentos</strong> no participa de esta tabla (queda en el bloque
+              ABRAZANDOCUENTOS).
+            </>
+          }
+          explainExpanded={ventasMambulaNoteOpen}
+          formatArs={(n) => currencyArsFormatter.format(n)}
+          onSaldar={(p) => {
+            const row = partnerGainRows.find((r) => r.partner === p.nombre)
+            if (row) {
+              setSettleRow(row)
+            }
+          }}
+          onToggleExplain={() => setVentasMambulaNoteOpen((open) => !open)}
+          participantes={liquidacionesParticipantes}
+          totalBruto={grossSalesArs}
+          totalEjemplares={soldCopies}
+          wonkyPorLibroArs={WONKY_ARS_PER_VENTA_COPY}
+        />
+        {partnerSettlements.length > 0 ? (
+          <div className="ios-card liquidaciones-settlements-follow">
+            <div className="settlement-history-block settlement-history-block--flush">
+              <h4>Movimientos de saldo</h4>
+              <ul className="settlement-history-list">
+                {partnerSettlements.map((entry) => (
+                  <li key={entry.id}>
+                    <span>{entry.partner}</span>
+                    <span>{currencyArsFormatter.format(entry.amountArs)}</span>
+                    <span>{entry.settledOn}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        ) : null}
+
+        {settleRow ? (
+          <PartnerSettlementSheet
+            key={`${settleRow.partner}-${settlementsTotalForPartner(partnerSettlements, settleRow.partner)}-${partnerSettlements.length}`}
+            breakdown={settleRow}
+            partnerSettlements={partnerSettlements}
+            onClose={() => setSettleRow(null)}
+            onSubmit={async (amountArs, settledOn) => {
+              await savePartnerSettlement({
+                partner: settleRow.partner,
+                amountArs,
+                settledOn,
+              })
+              setSettleRow(null)
+            }}
+          />
+        ) : null}
       </div>
     </section>
   )
 }
 
 function VentasScreen({
-  cancelEditingSale,
-  editError,
-  editingSaleId,
   grossSalesArs,
   paidSalesArs,
   pendingSalesArs,
   onSelectSale,
   onToggleDelivered,
-  saleDraft,
   sales,
-  savingSaleId,
-  saveEditingSale,
-  setSaleDraft,
   togglingDeliveryId,
 }: {
-  cancelEditingSale: () => void
-  editError: string | null
-  editingSaleId: string | null
   grossSalesArs: number
   paidSalesArs: number
   pendingSalesArs: number
   onSelectSale: (sale: Sale) => void
   onToggleDelivered: (sale: Sale) => void
-  saleDraft: SaleDraft | null
   sales: Sale[]
-  savingSaleId: string | null
-  saveEditingSale: (saleId: string) => void
-  setSaleDraft: (draft: SaleDraft) => void
   togglingDeliveryId: string | null
 }) {
   const [filter, setFilter] = useState<'todas' | 'pendiente' | 'porEntregar'>('todas')
@@ -854,20 +1321,12 @@ function VentasScreen({
         onChange={setFilter}
       />
 
-      {editError ? <p className="edit-error">{editError}</p> : null}
-
       <div className="list-group">
         {filteredSales.map((sale, index) => (
           <SaleRow
-            cancelEditingSale={cancelEditingSale}
-            editing={editingSaleId === sale.id}
             isLast={index === filteredSales.length - 1}
             key={sale.id}
             sale={sale}
-            saleDraft={saleDraft}
-            saving={savingSaleId === sale.id}
-            saveEditingSale={saveEditingSale}
-            setSaleDraft={setSaleDraft}
             togglingDelivery={togglingDeliveryId === sale.id}
             onSelectSale={onSelectSale}
             onToggleDelivered={onToggleDelivered}
@@ -880,62 +1339,132 @@ function VentasScreen({
   )
 }
 
+function EncargosScreen({
+  onSelectSale,
+  onVenderEncargo,
+  sales,
+}: {
+  onSelectSale: (sale: Sale) => void
+  onVenderEncargo: (sale: Sale) => void
+  sales: Sale[]
+}) {
+  const [query, setQuery] = useState('')
+
+  const filteredSales = useMemo(() => {
+    const normalized = query.toLowerCase()
+
+    return sales.filter((sale) => sale.buyer.toLowerCase().includes(normalized))
+  }, [query, sales])
+
+  const pendingEncargosArs = useMemo(() => {
+    return sales.reduce((sum, sale) => sum + Math.max(0, getSalePending(sale)), 0)
+  }, [sales])
+
+  return (
+    <section className="screen">
+      <ScreenHeader
+        eyebrow="Mambula"
+        title="Encargos"
+        subtitle={`Sin entregar ni cobrar · ${sales.length} ${sales.length === 1 ? 'registro' : 'registros'} · Por cobrar ${formatCompact(pendingEncargosArs)}`}
+      />
+
+      <div className="search-box">
+        <Icon name="search" />
+        <input
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Buscar consumidor"
+          value={query}
+        />
+      </div>
+
+      <div className="list-group">
+        {filteredSales.map((sale, index) => (
+          <EncargoRow
+            isLast={index === filteredSales.length - 1}
+            key={sale.id}
+            sale={sale}
+            onSelectSale={onSelectSale}
+            onVenderEncargo={onVenderEncargo}
+          />
+        ))}
+      </div>
+
+      {filteredSales.length === 0 ? (
+        <p className="empty-message">{sales.length === 0 ? 'Sin encargos activos' : 'Sin resultados'}</p>
+      ) : null}
+    </section>
+  )
+}
+
+function EncargoRow({
+  isLast,
+  onSelectSale,
+  onVenderEncargo,
+  sale,
+}: {
+  isLast: boolean
+  onSelectSale: (sale: Sale) => void
+  onVenderEncargo: (sale: Sale) => void
+  sale: Sale
+}) {
+  const qtyLabel =
+    sale.quantity === null || sale.quantity === undefined
+      ? '-'
+      : `${sale.quantity} ${sale.quantity === 1 ? 'unidad' : 'unidades'}`
+
+  return (
+    <div className={`encargo-row sale-row ${isLast ? 'last' : ''}`}>
+      <div
+        className="encargo-row-body"
+        onClick={() => onSelectSale(sale)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onSelectSale(sale)
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        <div className="encargo-row-text">
+          <strong>{sale.buyer}</strong>
+          <div className="sale-row-meta">
+            <span>{sale.seller ?? 'Sin vendedor'}</span>
+            <span aria-hidden="true">·</span>
+            <span>{qtyLabel}</span>
+          </div>
+        </div>
+      </div>
+      <button
+        className="primary-button encargo-vender-button"
+        onClick={(event) => {
+          event.stopPropagation()
+          onVenderEncargo(sale)
+        }}
+        type="button"
+      >
+        Vender
+      </button>
+    </div>
+  )
+}
+
 function SaleRow({
-  cancelEditingSale,
-  editing,
   isLast,
   onSelectSale,
   onToggleDelivered,
   sale,
-  saleDraft,
-  saving,
-  saveEditingSale,
-  setSaleDraft,
   togglingDelivery,
 }: {
-  cancelEditingSale: () => void
-  editing: boolean
   isLast: boolean
   onSelectSale: (sale: Sale) => void
   onToggleDelivered: (sale: Sale) => void
   sale: Sale
-  saleDraft: SaleDraft | null
-  saving: boolean
-  saveEditingSale: (saleId: string) => void
-  setSaleDraft: (draft: SaleDraft) => void
   togglingDelivery: boolean
 }) {
   const totalArs = getSaleTotal(sale)
   const pendingArs = getSalePending(sale)
   const status = getSaleStatus(sale)
-
-  if (editing && saleDraft) {
-    return (
-      <div className={`sale-row edit ${isLast ? 'last' : ''}`}>
-        <div className="edit-grid">
-          <input value={saleDraft.buyer} onChange={(event) => setSaleDraft({ ...saleDraft, buyer: event.target.value })} />
-          <SellerSelect value={saleDraft.seller} onChange={(seller) => setSaleDraft({ ...saleDraft, seller })} />
-          <input inputMode="numeric" placeholder="Unidades" value={saleDraft.quantity} onChange={(event) => setSaleDraft({ ...saleDraft, quantity: event.target.value })} />
-          <UnitPriceSelect value={saleDraft.unitPriceArs} onChange={(unitPriceArs) => setSaleDraft({ ...saleDraft, unitPriceArs })} />
-          <input inputMode="numeric" placeholder="Pagado" value={saleDraft.paidArs} onChange={(event) => setSaleDraft({ ...saleDraft, paidArs: event.target.value })} />
-          <select value={saleDraft.paymentMethod} onChange={(event) => setSaleDraft({ ...saleDraft, paymentMethod: event.target.value as Sale['paymentMethod'] })}>
-            <option value="transferencia">Transferencia</option>
-            <option value="efectivo">Efectivo</option>
-            <option value="otro">Otro</option>
-          </select>
-          <InvoiceStatusSelect value={saleDraft.invoiceStatus} onChange={(invoiceStatus) => setSaleDraft({ ...saleDraft, invoiceStatus })} />
-          <DeliveredSelect value={saleDraft.delivered} onChange={(delivered) => setSaleDraft({ ...saleDraft, delivered })} />
-          <input className="wide" placeholder="Nota" value={saleDraft.billingNotes} onChange={(event) => setSaleDraft({ ...saleDraft, billingNotes: event.target.value })} />
-        </div>
-        <div className="edit-actions">
-          <button className="secondary-button" onClick={cancelEditingSale} type="button">Cancelar</button>
-          <button className="primary-button" disabled={saving} onClick={() => saveEditingSale(sale.id)} type="button">
-            {saving ? 'Guardando...' : 'Guardar'}
-          </button>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div
@@ -965,7 +1494,7 @@ function SaleRow({
         </div>
       </div>
       <div className="sale-row-actions">
-        <InvoiceIcon status={sale.invoiceStatus ?? 'no_aplica'} />
+        <InvoiceIcon status={sale.invoiceStatus ?? 'pendiente'} />
         <DeliveryIndicator
           delivered={isDelivered(sale)}
           disabled={togglingDelivery}
@@ -979,37 +1508,97 @@ function SaleRow({
   )
 }
 
+function EncargoSummarySheet({
+  onClose,
+  onVender,
+  sale,
+}: {
+  onClose: () => void
+  onVender: (sale: Sale) => void
+  sale: Sale
+}) {
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
+        <div className="grabber" />
+        <div className="sheet-head">
+          <div>
+            <h2>Encargo</h2>
+            <p>Nombre del comprador, vendedora y cantidad de ejemplares.</p>
+          </div>
+          <button className="close-button" onClick={onClose} type="button">×</button>
+        </div>
+
+        <div className="new-sale-form">
+          <div className="new-sale-stack">
+            <div className="new-sale-field">
+              <span className="new-sale-field-label" id="encargo-sum-buyer-label">
+                Comprador
+              </span>
+              <input
+                aria-labelledby="encargo-sum-buyer-label"
+                className="new-sale-input"
+                readOnly
+                tabIndex={-1}
+                value={sale.buyer}
+              />
+            </div>
+
+            <div className="new-sale-field">
+              <span className="new-sale-field-label" id="encargo-sum-seller-label">
+                Vendedor
+              </span>
+              <input
+                aria-labelledby="encargo-sum-seller-label"
+                className="new-sale-input"
+                readOnly
+                tabIndex={-1}
+                value={sale.seller ?? ''}
+              />
+            </div>
+
+            <div className="new-sale-field">
+              <span className="new-sale-field-label" id="encargo-sum-qty-label">
+                Unidades
+              </span>
+              <input
+                aria-labelledby="encargo-sum-qty-label"
+                className="new-sale-input"
+                readOnly
+                tabIndex={-1}
+                value={sale.quantity?.toString() ?? ''}
+              />
+            </div>
+          </div>
+
+          <button className="primary-button full" onClick={() => onVender(sale)} type="button">
+            Vender
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function SaleDetailSheet({
-  cancelEditingSale,
   deleting,
   deleteSale,
   editError,
-  editingSaleId,
   onClose,
   onToggleDelivered,
   sale,
-  saleDraft,
   savingInvoice,
-  savingSaleId,
-  saveEditingSale,
-  setSaleDraft,
   startEditingSale,
   togglingDelivery,
   updateInvoiceStatus,
 }: {
-  cancelEditingSale: () => void
   deleting: boolean
   deleteSale: (sale: Sale) => void
   editError: string | null
-  editingSaleId: string | null
   onClose: () => void
   onToggleDelivered: (sale: Sale) => void
   sale: Sale
-  saleDraft: SaleDraft | null
   savingInvoice: boolean
-  savingSaleId: string | null
-  saveEditingSale: (saleId: string) => void
-  setSaleDraft: (draft: SaleDraft) => void
   startEditingSale: (sale: Sale) => void
   togglingDelivery: boolean
   updateInvoiceStatus: (sale: Sale, invoiceStatus: NonNullable<Sale['invoiceStatus']>) => void
@@ -1019,7 +1608,6 @@ function SaleDetailSheet({
   const pendingArs = getSalePending(sale)
   const paidPct = totalArs > 0 ? Math.round((sale.paidArs / totalArs) * 100) : 0
   const status = getSaleStatus(sale)
-  const editing = editingSaleId === sale.id && saleDraft
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
@@ -1034,161 +1622,353 @@ function SaleDetailSheet({
           <button className="close-button" onClick={onClose} type="button">×</button>
         </div>
 
-        {editing ? (
-          <div className="sheet-edit">
-            <SaleRow
-              cancelEditingSale={cancelEditingSale}
-              editing
-              isLast
-              onSelectSale={() => undefined}
-              onToggleDelivered={() => undefined}
-              sale={sale}
-              saleDraft={saleDraft}
-              saving={savingSaleId === sale.id}
-              saveEditingSale={saveEditingSale}
-              setSaleDraft={setSaleDraft}
-              togglingDelivery={false}
+        {editError ? <p className="edit-error">{editError}</p> : null}
+
+        <div className="sheet-amount">
+          <span>Total de la venta</span>
+          <strong>{currencyArsFormatter.format(totalArs)}</strong>
+          <StatusPill kind={status} />
+        </div>
+
+        <div className="ios-card progress-card">
+          <div className="progress-label">
+            <span>Cobrado</span>
+            <strong>{paidPct}%</strong>
+          </div>
+          <div className="progress-track tall">
+            <div className={pendingArs > 0 ? 'progress-fill orange' : 'progress-fill green'} style={{ width: `${paidPct}%` }} />
+          </div>
+          <div className="progress-values">
+            <span>Pagado {currencyArsFormatter.format(sale.paidArs)}</span>
+            <span>Por pagar {currencyArsFormatter.format(pendingArs)}</span>
+          </div>
+        </div>
+
+        <ListGroup title="Desglose">
+          <ListItem label="Unidades" value={sale.quantity?.toString() ?? '-'} />
+          <ListItem label="Precio unitario" value={sale.unitPriceArs === null ? '-' : currencyArsFormatter.format(sale.unitPriceArs)} />
+          <ListItem label="Subtotal" value={currencyArsFormatter.format(totalArs)} />
+          <ListItem label="Vendedor" value={sale.seller ?? '-'} />
+        </ListGroup>
+        <ListGroup title="Entrega">
+          <div className="sheet-list-item sheet-list-item-delivery">
+            <span>Estado</span>
+            <DeliveryStatusToggle
+              delivered={isDelivered(sale)}
+              disabled={togglingDelivery}
+              onSelectDelivered={(next) => {
+                if (next === isDelivered(sale)) return
+                void onToggleDelivered(sale)
+              }}
             />
-            {editError ? <p className="edit-error">{editError}</p> : null}
+          </div>
+          <ListItem label="Nota" value={sale.billingNotes ?? '-'} />
+        </ListGroup>
+        <ListGroup title="Facturación">
+          <div className="sheet-list-item">
+            <span>Estado</span>
+            <select
+              className="sheet-select"
+              disabled={savingInvoice}
+              value={sale.invoiceStatus ?? 'pendiente'}
+              onChange={(event) => updateInvoiceStatus(sale, event.target.value as NonNullable<Sale['invoiceStatus']>)}
+            >
+              <option value="no_aplica">No se factura</option>
+              <option value="pendiente">Pendiente</option>
+              <option value="facturado">Facturado</option>
+            </select>
+          </div>
+        </ListGroup>
+        <button className="primary-button full" onClick={() => startEditingSale(sale)} type="button">
+          Editar venta
+        </button>
+        {confirmingDelete ? (
+          <div className="delete-confirmation">
+            <strong>¿Eliminar esta venta?</strong>
+            <p>Esta acción borra el registro de Supabase y no se puede deshacer.</p>
+            <div className="delete-actions">
+              <button className="secondary-button" onClick={() => setConfirmingDelete(false)} type="button">
+                Cancelar
+              </button>
+              <button className="danger-button" disabled={deleting} onClick={() => deleteSale(sale)} type="button">
+                {deleting ? 'Eliminando...' : 'Sí, eliminar'}
+              </button>
+            </div>
           </div>
         ) : (
-          <>
-            <div className="sheet-amount">
-              <span>Total de la venta</span>
-              <strong>{currencyArsFormatter.format(totalArs)}</strong>
-              <StatusPill kind={status} />
-            </div>
-
-            <div className="ios-card progress-card">
-              <div className="progress-label">
-                <span>Cobrado</span>
-                <strong>{paidPct}%</strong>
-              </div>
-              <div className="progress-track tall">
-                <div className={pendingArs > 0 ? 'progress-fill orange' : 'progress-fill green'} style={{ width: `${paidPct}%` }} />
-              </div>
-              <div className="progress-values">
-                <span>Pagado {currencyArsFormatter.format(sale.paidArs)}</span>
-                <span>Por pagar {currencyArsFormatter.format(pendingArs)}</span>
-              </div>
-            </div>
-
-            <ListGroup title="Desglose">
-              <ListItem label="Unidades" value={sale.quantity?.toString() ?? '-'} />
-              <ListItem label="Precio unitario" value={sale.unitPriceArs === null ? '-' : currencyArsFormatter.format(sale.unitPriceArs)} />
-              <ListItem label="Subtotal" value={currencyArsFormatter.format(totalArs)} />
-              <ListItem label="Vendedor" value={sale.seller ?? '-'} />
-            </ListGroup>
-            <ListGroup title="Entrega">
-              <div className="sheet-list-item sheet-list-item-delivery">
-                <span>Estado</span>
-                <DeliveryStatusToggle
-                  delivered={isDelivered(sale)}
-                  disabled={togglingDelivery}
-                  onSelectDelivered={(next) => {
-                    if (next === isDelivered(sale)) return
-                    void onToggleDelivered(sale)
-                  }}
-                />
-              </div>
-              <ListItem label="Nota" value={sale.billingNotes ?? '-'} />
-            </ListGroup>
-            <ListGroup title="Facturación">
-              <div className="sheet-list-item">
-                <span>Estado</span>
-                <select
-                  className="sheet-select"
-                  disabled={savingInvoice}
-                  value={sale.invoiceStatus ?? 'no_aplica'}
-                  onChange={(event) => updateInvoiceStatus(sale, event.target.value as NonNullable<Sale['invoiceStatus']>)}
-                >
-                  <option value="no_aplica">No va a ser facturado</option>
-                  <option value="no_facturado">No facturado</option>
-                  <option value="pendiente">Pendiente</option>
-                  <option value="facturado">Facturado</option>
-                </select>
-              </div>
-            </ListGroup>
-            <button className="primary-button full" onClick={() => startEditingSale(sale)} type="button">
-              Editar venta
-            </button>
-            {confirmingDelete ? (
-              <div className="delete-confirmation">
-                <strong>¿Eliminar esta venta?</strong>
-                <p>Esta acción borra el registro de Supabase y no se puede deshacer.</p>
-                <div className="delete-actions">
-                  <button className="secondary-button" onClick={() => setConfirmingDelete(false)} type="button">
-                    Cancelar
-                  </button>
-                  <button className="danger-button" disabled={deleting} onClick={() => deleteSale(sale)} type="button">
-                    {deleting ? 'Eliminando...' : 'Sí, eliminar'}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button className="danger-link-button" onClick={() => setConfirmingDelete(true)} type="button">
-                Eliminar venta
-              </button>
-            )}
-          </>
+          <button className="danger-link-button" onClick={() => setConfirmingDelete(true)} type="button">
+            Eliminar venta
+          </button>
         )}
       </div>
     </div>
   )
 }
 
-function NewSaleSheet({
-  createDraft,
+const UNIT_PRICE_ARS_VALUES = [15000, 12500, 7500] as const
+
+function unitPriceSegmentActive(unitPriceArs: string): string {
+  const trimmed = unitPriceArs.trim()
+  if (trimmed === '') return String(UNIT_PRICE_ARS_VALUES[0])
+  const numeric = parseOptionalNumber(trimmed)
+  if (numeric !== null && UNIT_PRICE_ARS_VALUES.some((v) => v === numeric)) return String(numeric)
+  return `extra:${trimmed}`
+}
+
+function unitPriceSegmentLabel(trimmed: string): string {
+  const numeric = parseOptionalNumber(trimmed)
+  const n = numeric !== null && Number.isFinite(numeric) ? numeric : 0
+  return `$${formatUnitPriceOptionLabel(n)}`
+}
+
+function unitPriceSegmentOptions(unitPriceArs: string): Array<{ key: string; label: string }> {
+  const base = UNIT_PRICE_ARS_VALUES.map((ars) => ({
+    key: String(ars),
+    label: `$${formatUnitPriceOptionLabel(ars)}`,
+  }))
+  const trimmed = unitPriceArs.trim()
+  const numeric = parseOptionalNumber(trimmed)
+  if (
+    trimmed === '' ||
+    (numeric !== null && UNIT_PRICE_ARS_VALUES.some((v) => v === numeric))
+  ) {
+    return base
+  }
+  return [...base, { key: `extra:${trimmed}`, label: unitPriceSegmentLabel(trimmed) }]
+}
+
+function unitPriceFromSegmentKey(key: string): string {
+  return key.startsWith('extra:') ? key.slice(6) : key
+}
+
+function formatUnitPriceOptionLabel(ars: number) {
+  return ars.toLocaleString('es-AR', { maximumFractionDigits: 0 })
+}
+
+const SOCIA_SELLERS = ['Delfi', 'Mechi', 'Susan'] as const
+type SociasSeller = (typeof SOCIA_SELLERS)[number]
+
+function SaleDraftSheet({
+  createVariant = 'venta',
+  draft,
   editError,
+  mode,
   onClose,
-  saving,
-  saveNewSale,
-  setCreateDraft,
+  onSubmit,
+  presentation = 'default',
+  setDraft,
+  submitting,
 }: {
-  createDraft: SaleDraft
+  createVariant?: 'venta' | 'encargo'
+  draft: SaleDraft
   editError: string | null
+  mode: 'create' | 'edit'
   onClose: () => void
-  saving: boolean
-  saveNewSale: () => void
-  setCreateDraft: (draft: SaleDraft) => void
+  onSubmit: () => void
+  presentation?: 'default' | 'encargoVender'
+  setDraft: (draft: SaleDraft) => void
+  submitting: boolean
 }) {
+  const minimalEncargoCreate = mode === 'create' && createVariant === 'encargo'
+  const encargoVenderLabels = mode === 'edit' && presentation === 'encargoVender'
+
+  const title = minimalEncargoCreate
+    ? 'Nuevo encargo'
+    : encargoVenderLabels
+      ? 'Nueva venta'
+      : mode === 'edit'
+        ? 'Editar venta'
+        : 'Nueva venta'
+
+  const subtitle = minimalEncargoCreate
+    ? 'Nombre del comprador, vendedora y cantidad de ejemplares.'
+    : 'Cargá los detalles antes de guardar el registro.'
+
+  const submitLabel = minimalEncargoCreate
+    ? 'Crear encargo'
+    : encargoVenderLabels
+      ? 'Guardar venta'
+      : mode === 'edit'
+        ? 'Guardar cambios'
+        : 'Crear venta'
+
+  const useSellerSelect =
+    mode === 'edit' &&
+    draft.seller.trim() !== '' &&
+    !(SOCIA_SELLERS as readonly string[]).includes(draft.seller.trim())
+
   return (
     <div className="sheet-backdrop" onClick={onClose}>
       <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
         <div className="grabber" />
         <div className="sheet-head">
           <div>
-            <h2>Nueva venta</h2>
-            <p>Cargá los detalles antes de guardar el registro.</p>
+            <h2>{title}</h2>
+            <p>{subtitle}</p>
           </div>
           <button className="close-button" onClick={onClose} type="button">×</button>
         </div>
 
         <div className="new-sale-form">
-          <div className="edit-grid">
-            <input placeholder="Comprador" value={createDraft.buyer} onChange={(event) => setCreateDraft({ ...createDraft, buyer: event.target.value })} />
-            <SellerSelect value={createDraft.seller} onChange={(seller) => setCreateDraft({ ...createDraft, seller })} />
-            <input inputMode="numeric" placeholder="Unidades" value={createDraft.quantity} onChange={(event) => setCreateDraft({ ...createDraft, quantity: event.target.value })} />
-            <UnitPriceSelect value={createDraft.unitPriceArs} onChange={(unitPriceArs) => setCreateDraft({ ...createDraft, unitPriceArs })} />
-            <input inputMode="numeric" placeholder="Pagado" value={createDraft.paidArs} onChange={(event) => setCreateDraft({ ...createDraft, paidArs: event.target.value })} />
-            <select value={createDraft.paymentMethod} onChange={(event) => setCreateDraft({ ...createDraft, paymentMethod: event.target.value as Sale['paymentMethod'] })}>
-              <option value="transferencia">Transferencia</option>
-              <option value="efectivo">Efectivo</option>
-              <option value="otro">Otro</option>
-            </select>
-            <select value={createDraft.paymentStatus} onChange={(event) => setCreateDraft({ ...createDraft, paymentStatus: event.target.value as Sale['paymentStatus'] })}>
-              <option value="pendiente">Por pagar</option>
-              <option value="cobrado">Cobrado</option>
-            </select>
-            <InvoiceStatusSelect value={createDraft.invoiceStatus} onChange={(invoiceStatus) => setCreateDraft({ ...createDraft, invoiceStatus })} />
-            <DeliveredSelect value={createDraft.delivered} onChange={(delivered) => setCreateDraft({ ...createDraft, delivered })} />
-            <input className="wide" placeholder="Nota" value={createDraft.billingNotes} onChange={(event) => setCreateDraft({ ...createDraft, billingNotes: event.target.value })} />
+          <div className="new-sale-stack">
+            <div className="new-sale-field">
+              <span className="new-sale-field-label" id="new-sale-buyer-label">
+                Comprador
+              </span>
+              <input
+                aria-labelledby="new-sale-buyer-label"
+                className="new-sale-input"
+                placeholder="Nombre"
+                value={draft.buyer}
+                onChange={(event) => setDraft({ ...draft, buyer: event.target.value })}
+              />
+            </div>
+
+            <div className="new-sale-field">
+              <span className="new-sale-field-label">Vendedor</span>
+              {useSellerSelect ? (
+                <SellerSelect value={draft.seller} onChange={(seller) => setDraft({ ...draft, seller })} />
+              ) : (
+                <Segmented<SociasSeller>
+                  active={
+                    SOCIA_SELLERS.includes(draft.seller as SociasSeller)
+                      ? (draft.seller as SociasSeller)
+                      : 'Delfi'
+                  }
+                  onChange={(seller) => setDraft({ ...draft, seller })}
+                  options={[
+                    { key: 'Delfi', label: 'Delfi' },
+                    { key: 'Mechi', label: 'Mechi' },
+                    { key: 'Susan', label: 'Susan' },
+                  ]}
+                />
+              )}
+            </div>
+
+            {minimalEncargoCreate ? (
+              <div className="new-sale-field">
+                <span className="new-sale-field-label" id="new-sale-qty-label">
+                  Unidades
+                </span>
+                <input
+                  aria-labelledby="new-sale-qty-label"
+                  className="new-sale-input"
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={draft.quantity}
+                  onChange={(event) => setDraft({ ...draft, quantity: event.target.value })}
+                />
+              </div>
+            ) : (
+              <>
+                <div className="new-sale-row2">
+                  <div className="new-sale-field">
+                    <span className="new-sale-field-label" id="new-sale-qty-label-full">
+                      Unidades
+                    </span>
+                    <input
+                      aria-labelledby="new-sale-qty-label-full"
+                      className="new-sale-input"
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={draft.quantity}
+                      onChange={(event) => setDraft({ ...draft, quantity: event.target.value })}
+                    />
+                  </div>
+                  <div className="new-sale-field">
+                    <span className="new-sale-field-label" id="new-sale-paid-label">
+                      Pagado (ARS)
+                    </span>
+                    <input
+                      aria-labelledby="new-sale-paid-label"
+                      className="new-sale-input"
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={draft.paidArs}
+                      onChange={(event) => setDraft({ ...draft, paidArs: event.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="new-sale-field">
+                  <span className="new-sale-field-label">Precio unitario</span>
+                  <Segmented<string>
+                    active={unitPriceSegmentActive(draft.unitPriceArs)}
+                    onChange={(key) => setDraft({ ...draft, unitPriceArs: unitPriceFromSegmentKey(key) })}
+                    options={unitPriceSegmentOptions(draft.unitPriceArs)}
+                  />
+                </div>
+
+                <div className="new-sale-field">
+                  <span className="new-sale-field-label">Medio de pago</span>
+                  <Segmented<Sale['paymentMethod']>
+                    active={draft.paymentMethod}
+                    onChange={(paymentMethod) => setDraft({ ...draft, paymentMethod })}
+                    options={[
+                      { key: 'transferencia', label: 'Transferencia' },
+                      { key: 'efectivo', label: 'Efectivo' },
+                      { key: 'otro', label: 'Otro' },
+                    ]}
+                  />
+                </div>
+
+                <div className="new-sale-field">
+                  <span className="new-sale-field-label">Pago</span>
+                  <Segmented<Sale['paymentStatus']>
+                    active={draft.paymentStatus}
+                    onChange={(paymentStatus) => setDraft({ ...draft, paymentStatus })}
+                    options={[
+                      { key: 'pendiente', label: 'Por pagar' },
+                      { key: 'cobrado', label: 'Cobrado' },
+                    ]}
+                  />
+                </div>
+
+                <div className="new-sale-field">
+                  <span className="new-sale-field-label">Facturación</span>
+                  <Segmented<NonNullable<Sale['invoiceStatus']>>
+                    active={draft.invoiceStatus}
+                    onChange={(invoiceStatus) => setDraft({ ...draft, invoiceStatus })}
+                    options={[
+                      { key: 'no_aplica', label: 'No se factura' },
+                      { key: 'pendiente', label: 'Pendiente' },
+                      { key: 'facturado', label: 'Facturado' },
+                    ]}
+                  />
+                </div>
+
+                <div className="new-sale-field">
+                  <span className="new-sale-field-label">Entregado</span>
+                  <Segmented<'SI' | 'NO'>
+                    active={draft.delivered.trim().toUpperCase() === 'SI' ? 'SI' : 'NO'}
+                    onChange={(delivered) => setDraft({ ...draft, delivered })}
+                    options={[
+                      { key: 'NO', label: 'No' },
+                      { key: 'SI', label: 'Sí' },
+                    ]}
+                  />
+                </div>
+
+                <div className="new-sale-field">
+                  <span className="new-sale-field-label" id="new-sale-notes-label">
+                    Nota
+                  </span>
+                  <input
+                    aria-labelledby="new-sale-notes-label"
+                    className="new-sale-input"
+                    placeholder="Opcional"
+                    value={draft.billingNotes}
+                    onChange={(event) => setDraft({ ...draft, billingNotes: event.target.value })}
+                  />
+                </div>
+              </>
+            )}
           </div>
           {editError ? <p className="edit-error">{editError}</p> : null}
           <div className="edit-actions">
             <button className="secondary-button" onClick={onClose} type="button">Cancelar</button>
-            <button className="primary-button" disabled={saving} onClick={saveNewSale} type="button">
-              {saving ? 'Guardando...' : 'Crear venta'}
+            <button className="primary-button" disabled={submitting} onClick={onSubmit} type="button">
+              {submitting ? 'Guardando...' : submitLabel}
             </button>
           </div>
         </div>
@@ -1196,13 +1976,12 @@ function NewSaleSheet({
     </div>
   )
 }
-
 function PromocionalesScreen() {
   const [filter, setFilter] = useState<'todos' | 'pendientes' | 'entregados'>('todos')
   const [promoRows, setPromoRows] = useState(promoData)
   const [promoDraft, setPromoDraft] = useState<PromoDraft | null>(null)
   const [promoError, setPromoError] = useState<string | null>(null)
-  const all = [...promoRows.equipo, ...promoRows.colaboracion, ...promoRows.influencers]
+  const all = [...promoRows.equipo, ...promoRows.colaboracion, ...promoRows.influencers, ...promoRows.colegio]
   const total = all.reduce((sum, row) => sum + row.unidades, 0)
   const delivered = all.filter((row) => row.entregado).reduce((sum, row) => sum + row.unidades, 0)
 
@@ -1246,7 +2025,7 @@ function PromocionalesScreen() {
       <ScreenHeader
         eyebrow="Mambula"
         title="Promocionales"
-        subtitle="Ejemplares entregados al equipo, colaboradores e influencers."
+        subtitle="Ejemplares entregados al equipo, colaboradores, colegios e influencers."
       />
       <div className="stats-row">
         <button
@@ -1276,6 +2055,7 @@ function PromocionalesScreen() {
       </div>
       <PromoSection filter={filter} group="equipo" rows={promoRows.equipo} tag="Equipo" title="Equipo Mambula" onToggleDelivered={toggleDelivered} />
       <PromoSection filter={filter} group="colaboracion" rows={promoRows.colaboracion} tag="Colaboración" title="Colaboradores" onToggleDelivered={toggleDelivered} />
+      <PromoSection filter={filter} group="colegio" rows={promoRows.colegio} tag="Colegio" title="Colegios" onToggleDelivered={toggleDelivered} />
       <PromoSection filter={filter} group="influencers" rows={promoRows.influencers} tag="Influencers" title="Prensa & influencers" onToggleDelivered={toggleDelivered} />
       {promoDraft ? (
         <NewPromoSheet
@@ -1465,6 +2245,7 @@ function NewPromoSheet({
             <select value={draft.group} onChange={(event) => setDraft({ ...draft, group: event.target.value as PromoGroup })}>
               <option value="equipo">Equipo</option>
               <option value="colaboracion">Colaboración</option>
+              <option value="colegio">Colegio</option>
               <option value="influencers">Influencers</option>
             </select>
             <DeliveredSelect value={draft.entregado} onChange={(entregado) => setDraft({ ...draft, entregado })} />
@@ -1688,52 +2469,24 @@ function Segmented<T extends string>({
 }
 
 function SellerSelect({
+  hideAbrazandoCuentos = false,
   onChange,
   value,
 }: {
+  hideAbrazandoCuentos?: boolean
   onChange: (seller: string) => void
   value: string
 }) {
+  const sellers = hideAbrazandoCuentos ? SOCIA_SELLERS : ([...SOCIA_SELLERS, 'Abrazandocuentos'] as const)
+
   return (
     <select aria-label="Vendedor" value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">Vendedor</option>
-      <option value="Delfi">Delfi</option>
-      <option value="Mechi">Mechi</option>
-      <option value="Susan">Susan</option>
-      <option value="Abrazandocuentos">Abrazandocuentos</option>
-    </select>
-  )
-}
-
-const UNIT_PRICE_ARS_VALUES = [15000, 12500, 7500] as const
-
-function formatUnitPriceOptionLabel(ars: number) {
-  return ars.toLocaleString('es-AR', { maximumFractionDigits: 0 })
-}
-
-function UnitPriceSelect({
-  onChange,
-  value,
-}: {
-  onChange: (unitPriceArs: string) => void
-  value: string
-}) {
-  const numeric = parseOptionalNumber(value)
-  const isPreset = numeric !== null && UNIT_PRICE_ARS_VALUES.some((v) => v === numeric)
-  const extraOption =
-    value !== '' && numeric !== null && !isPreset ? (
-      <option value={value}>{formatUnitPriceOptionLabel(numeric)}</option>
-    ) : null
-
-  return (
-    <select aria-label="Precio unitario" value={value} onChange={(event) => onChange(event.target.value)}>
-      <option value="">Precio unitario</option>
-      {UNIT_PRICE_ARS_VALUES.map((ars) => (
-        <option key={ars} value={String(ars)}>
-          {formatUnitPriceOptionLabel(ars)}
+      {sellers.map((name) => (
+        <option key={name} value={name}>
+          {name}
         </option>
       ))}
-      {extraOption}
     </select>
   )
 }
@@ -1791,27 +2544,11 @@ function DeliveryStatusToggle({
   )
 }
 
-function InvoiceStatusSelect({
-  onChange,
-  value,
-}: {
-  onChange: (invoiceStatus: NonNullable<Sale['invoiceStatus']>) => void
-  value: NonNullable<Sale['invoiceStatus']>
-}) {
-  return (
-    <select aria-label="Facturación" value={value} onChange={(event) => onChange(event.target.value as NonNullable<Sale['invoiceStatus']>)}>
-      <option value="no_aplica">No se factura</option>
-      <option value="no_facturado">No facturado</option>
-      <option value="pendiente">Pendiente</option>
-      <option value="facturado">Facturado</option>
-    </select>
-  )
-}
-
 function TabBar({ active, onChange }: { active: AppTab; onChange: (tab: AppTab) => void }) {
   const tabs: Array<{ key: AppTab; label: string; icon: IconName }> = [
     { key: 'home', label: 'Inicio', icon: 'home' },
     { key: 'ventas', label: 'Ventas', icon: 'bag' },
+    { key: 'encargos', label: 'Encargos', icon: 'package' },
     { key: 'gastos', label: 'Gastos', icon: 'person' },
     { key: 'promo', label: 'Promos', icon: 'chart' },
   ]
@@ -1877,15 +2614,30 @@ function DeliveryIndicator({
 }
 
 function InvoiceIcon({ status }: { status: NonNullable<Sale['invoiceStatus']> }) {
-  if (status === 'no_aplica') return null
+  const docPaths = (
+    <>
+      <path d="M6 3h12v18l-2-1.2L14 21l-2-1.2L10 21l-2-1.2L6 21V3Z" />
+      <path d="M9 8h6" />
+      <path d="M9 12h6" />
+      <path d="M9 16h4" />
+    </>
+  )
+
+  if (status === 'no_aplica') {
+    return (
+      <span className="invoice-icon no_aplica" title={invoiceStatusLabel(status)}>
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          {docPaths}
+          <path className="invoice-icon-slash" d="M5 5l14 14" fill="none" />
+        </svg>
+      </span>
+    )
+  }
 
   return (
     <span className={`invoice-icon ${status}`} title={invoiceStatusLabel(status)}>
       <svg aria-hidden="true" viewBox="0 0 24 24">
-        <path d="M6 3h12v18l-2-1.2L14 21l-2-1.2L10 21l-2-1.2L6 21V3Z" />
-        <path d="M9 8h6" />
-        <path d="M9 12h6" />
-        <path d="M9 16h4" />
+        {docPaths}
       </svg>
     </span>
   )
@@ -1893,9 +2645,8 @@ function InvoiceIcon({ status }: { status: NonNullable<Sale['invoiceStatus']> })
 
 function invoiceStatusLabel(status: NonNullable<Sale['invoiceStatus']>) {
   if (status === 'facturado') return 'Facturado'
-  if (status === 'pendiente') return 'Facturación pendiente'
-  if (status === 'no_facturado') return 'No facturado'
-  return 'No va a ser facturado'
+  if (status === 'pendiente') return 'Pendiente'
+  return 'No se factura'
 }
 
 function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }) {
@@ -1903,15 +2654,6 @@ function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }) {
     <div className="section-title">
       <span>{eyebrow}</span>
       <h2>{title}</h2>
-    </div>
-  )
-}
-
-function RuleRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rule-row">
-      <span>{label}</span>
-      <strong>{value}</strong>
     </div>
   )
 }
@@ -1946,7 +2688,7 @@ function PayerChip({ name }: { name: string }) {
   return <span className={`payer-chip payer-${name.toLowerCase()}`}>{name}</span>
 }
 
-type IconName = 'search' | 'chart' | 'home' | 'bag' | 'person'
+type IconName = 'search' | 'chart' | 'home' | 'bag' | 'person' | 'package'
 
 function Icon({ name }: { name: IconName }) {
   const paths = {
@@ -1955,6 +2697,13 @@ function Icon({ name }: { name: IconName }) {
     home: <><path d="M3 12 12 3l9 9" /><path d="M5 10v10h14V10" /></>,
     bag: <><path d="M6 8h12l-1 13H7L6 8Z" /><path d="M9 8a3 3 0 0 1 6 0" /></>,
     person: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
+    package: (
+      <>
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+        <polyline fill="none" points="3.27 6.96 12 12.01 20.73 6.96" />
+        <line fill="none" x1="12" x2="12" y1="22.08" y2="12" />
+      </>
+    ),
   }
 
   return (
@@ -2002,6 +2751,11 @@ function getSaleStatus(sale: Sale): 'pagado' | 'parcial' | 'pendiente' {
 
 function isDelivered(sale: Sale) {
   return (sale.delivered ?? '').trim().toLowerCase() === 'si'
+}
+
+/** Pendiente de entrega y de cobro (figura solo en Encargos, no en la lista principal de Ventas). */
+function isEncargoSale(sale: Sale) {
+  return !isDelivered(sale) && isSalePending(sale)
 }
 
 function formatCompact(value: number) {
@@ -2085,17 +2839,32 @@ function getPathForTab(tab: AppTab) {
   return route ? `${base}${route}` : base
 }
 
+function saleToDraft(sale: Sale): SaleDraft {
+  return {
+    buyer: sale.buyer,
+    seller: sale.seller ?? '',
+    quantity: sale.quantity?.toString() ?? '',
+    unitPriceArs: sale.unitPriceArs?.toString() ?? '',
+    paidArs: sale.paidArs.toString(),
+    paymentMethod: sale.paymentMethod,
+    paymentStatus: sale.paymentStatus,
+    invoiceStatus: sale.invoiceStatus ?? 'pendiente',
+    delivered: sale.delivered ?? '',
+    billingNotes: sale.billingNotes ?? '',
+  }
+}
+
 function createEmptySaleDraft(): SaleDraft {
   return {
     buyer: '',
-    seller: '',
+    seller: 'Delfi',
     quantity: '',
-    unitPriceArs: '',
+    unitPriceArs: '15000',
     paidArs: '',
     paymentMethod: 'transferencia',
     paymentStatus: 'pendiente',
-    invoiceStatus: 'no_aplica',
-    delivered: '',
+    invoiceStatus: 'pendiente',
+    delivered: 'NO',
     billingNotes: '',
   }
 }
@@ -2128,6 +2897,22 @@ function createStockAllocationDraft(allocations: StockAllocation[]): StockAlloca
 
     return draft
   }, {})
+}
+
+function cobradoPaidValidationError(draft: SaleDraft): string | null {
+  if (draft.paymentStatus !== 'cobrado') return null
+
+  const trimmed = draft.paidArs.trim()
+  if (trimmed === '') {
+    return 'Si elegís Cobrado, completá el monto en Pagado (ARS).'
+  }
+
+  const paid = parseOptionalNumber(draft.paidArs)
+  if (paid === null || paid <= 0) {
+    return 'Si elegís Cobrado, ingresá un monto válido mayor a cero en Pagado (ARS).'
+  }
+
+  return null
 }
 
 function draftToSaleInput(draft: SaleDraft): SaleCreateInput {

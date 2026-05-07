@@ -470,6 +470,38 @@
   border-bottom: 0;
 }
 
+.encargo-row.sale-row {
+  cursor: default;
+}
+
+.encargo-row-body {
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+.encargo-row-text {
+  min-width: 0;
+}
+
+.encargo-row-text strong {
+  color: var(--label);
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.encargo-vender-button.primary-button {
+  flex-shrink: 0;
+  font-size: 14px;
+  padding: 8px 14px;
+}
+
 .avatar {
   align-items: center;
   border-radius: 999px;
@@ -587,14 +619,20 @@
   color: var(--green);
 }
 
+.invoice-icon svg path.invoice-icon-slash {
+  stroke: var(--red);
+  stroke-linecap: round;
+  stroke-width: 2.35;
+}
+
 .invoice-icon.pendiente {
   background: rgba(255, 204, 0, 0.24);
   color: #a07700;
 }
 
-.invoice-icon.no_facturado {
-  background: var(--gray-fill);
-  color: var(--label-3);
+.invoice-icon.no_aplica {
+  background: rgba(255, 59, 48, 0.12);
+  color: rgba(60, 60, 67, 0.45);
 }
 
 .amount {
@@ -766,6 +804,56 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.new-sale-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.new-sale-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.new-sale-field-label {
+  color: var(--label-3);
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.new-sale-input {
+  background: var(--gray-fill);
+  border: 0;
+  border-radius: 10px;
+  box-sizing: border-box;
+  color: var(--label);
+  font: inherit;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.new-sale-input[readonly] {
+  cursor: default;
+  opacity: 0.92;
+}
+
+.new-sale-row2 {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.new-sale-form .segmented button {
+  font-size: 12px;
+  line-height: 1.25;
+  padding: 8px 6px;
 }
 
 .delete-confirmation {
@@ -1225,4 +1313,467 @@
     font-size: 12px;
     padding-inline: 4px;
   }
+}
+
+.dashboard-split-card .card-note strong {
+  font-weight: 600;
+}
+
+/* Liquidaciones — Ventas Mambula (card redesign) */
+.liquidaciones-ventas-card {
+  background: var(--surface);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.liquidaciones-ventas-head {
+  padding: 16px 16px 12px;
+}
+
+.liquidaciones-ventas-head-row {
+  display: flex;
+}
+
+.liquidaciones-ventas-eyebrow {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.liquidaciones-ventas-ver-todo {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  padding: 0;
+}
+
+.liquidaciones-ventas-ver-todo:hover {
+  text-decoration: underline;
+}
+
+.liquidaciones-ventas-ver-todo:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.liquidaciones-ventas-title {
+  color: var(--label);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  margin-top: 4px;
+}
+
+.liquidaciones-ventas-subtitle-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.liquidaciones-ventas-subtitle-text {
+  color: var(--label-3);
+  flex: 1;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.liquidaciones-ventas-explain-detail {
+  margin-top: 10px;
+}
+
+.liquidaciones-ventas-hero-wrap {
+  padding: 0 12px 14px;
+}
+
+.liquidaciones-ventas-hero {
+  background: var(--surface-2);
+  border-radius: 12px;
+  padding: 14px 14px 12px;
+}
+
+.liquidaciones-ventas-hero-top {
+  align-items: flex-end;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.liquidaciones-ventas-hero-label {
+  color: var(--label-3);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.liquidaciones-ventas-hero-bruto {
+  color: var(--label);
+  font-size: 30px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+  margin-top: 2px;
+}
+
+.liquidaciones-ventas-hero-meta {
+  color: var(--label-3);
+  font-size: 12px;
+  line-height: 1.35;
+  padding-bottom: 4px;
+  text-align: right;
+}
+
+.liquidaciones-ventas-hero-meta-strong {
+  color: var(--label-2);
+}
+
+.liquidaciones-ventas-progress-block {
+  margin-top: 14px;
+}
+
+.liquidaciones-ventas-progress-track {
+  background: var(--gray-fill-2);
+  border-radius: 3px;
+  display: flex;
+  overflow: hidden;
+}
+
+.liquidaciones-ventas-progress-track--fat {
+  border-radius: 3px;
+  height: 6px;
+}
+
+.liquidaciones-ventas-progress-track--thin {
+  background: var(--gray-fill);
+  border-radius: 2px;
+  flex: 1;
+  height: 4px;
+}
+
+.liquidaciones-ventas-progress-fill {
+  background: var(--green);
+  height: 100%;
+}
+
+.liquidaciones-ventas-progress-legend {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.liquidaciones-ventas-progress-legend-right {
+  text-align: right;
+}
+
+.liquidaciones-ventas-legend-row {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.liquidaciones-ventas-legend-row-end {
+  justify-content: flex-end;
+}
+
+.liquidaciones-ventas-dot {
+  border-radius: 4px;
+  flex: none;
+  height: 8px;
+  width: 8px;
+}
+
+.liquidaciones-ventas-dot--green {
+  background: var(--green);
+}
+
+.liquidaciones-ventas-dot--muted {
+  background: var(--gray-fill-2);
+}
+
+.liquidaciones-ventas-legend-label {
+  color: var(--label-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.liquidaciones-ventas-legend-value {
+  color: var(--label);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.liquidaciones-ventas-section-label {
+  color: var(--label-3);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 0 16px 6px;
+  text-transform: uppercase;
+}
+
+.liquidaciones-ventas-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.liquidaciones-ventas-row {
+  border-top: 0.5px solid var(--separator);
+  padding: 12px 16px;
+}
+
+.liquidaciones-ventas-row:first-child {
+  border-top: none;
+}
+
+.liquidaciones-ventas-row-inner {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.liquidaciones-ventas-avatar {
+  align-items: center;
+  border-radius: 16px;
+  display: flex;
+  flex: none;
+  font-size: 13px;
+  font-weight: 700;
+  height: 32px;
+  justify-content: center;
+  letter-spacing: -0.01em;
+  width: 32px;
+}
+
+.liquidaciones-ventas-row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.liquidaciones-ventas-row-title-line {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.liquidaciones-ventas-part-name {
+  color: var(--label);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.liquidaciones-ventas-part-gain {
+  color: var(--label);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.liquidaciones-ventas-row-micro {
+  color: var(--label-3);
+  display: flex;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  justify-content: space-between;
+  margin-top: 3px;
+}
+
+.liquidaciones-ventas-pendiente-strong {
+  color: var(--label-2);
+  font-weight: 600;
+}
+
+.liquidaciones-ventas-row-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+  padding-left: 44px;
+}
+
+.liquidaciones-ventas-saldar-btn {
+  background: var(--gray-fill);
+  border: none;
+  border-radius: 999px;
+  color: var(--accent);
+  cursor: pointer;
+  flex: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.liquidaciones-ventas-saldar-btn:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.dashboard-mini-table {
+  border-collapse: collapse;
+  font-size: 14px;
+  width: 100%;
+}
+
+.dashboard-mini-table td {
+  border-bottom: 0.5px solid var(--separator);
+  padding: 10px 4px;
+  vertical-align: top;
+}
+
+.dashboard-mini-table td:last-child {
+  font-weight: 600;
+  text-align: right;
+}
+
+.dashboard-mini-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.muted-micro {
+  color: var(--label-3);
+  font-size: 11px;
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+.tiny-settle-button {
+  background: var(--gray-fill);
+  border: 0;
+  border-radius: 9px;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
+.tiny-settle-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.settlement-summary .sheet-list-item {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.settlement-history-block {
+  border-top: 0.5px solid var(--separator);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.settlement-history-block--flush {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.liquidaciones-settlements-follow {
+  margin-bottom: 88px;
+}
+
+.settlement-history-block h4 {
+  color: var(--label-3);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
+.settlement-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.settlement-history-list li {
+  color: var(--label-2);
+  display: grid;
+  font-size: 13px;
+  gap: 8px;
+  grid-template-columns: minmax(0, 80px) minmax(0, 1fr) minmax(0, 96px);
+}
+
+.dashboard-ganancias-subtitle {
+  align-items: baseline;
+  color: var(--label);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 15px;
+  font-weight: 700;
+  gap: 8px 12px;
+  letter-spacing: -0.02em;
+  margin: 18px 0 10px;
+}
+
+.ac-slider-persist-badge {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.ac-slider-persist-badge.muted {
+  color: var(--label-2);
+}
+
+.ac-slider-persist-badge.success {
+  color: var(--accent);
+}
+
+.ac-slider-persist-badge.danger {
+  color: #d4380d;
+}
+
+.ac-scheme-slider-block {
+  margin-bottom: 14px;
+}
+
+.ac-scheme-slider-label {
+  color: var(--label-2);
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 10px;
+}
+
+.ac-scheme-slider {
+  accent-color: var(--accent);
+  display: block;
+  margin-top: 4px;
+  max-width: 100%;
+  width: 100%;
+}
+
+.ac-scheme-slider:disabled {
+  opacity: 0.45;
 }

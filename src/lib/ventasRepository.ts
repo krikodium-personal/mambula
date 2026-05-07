@@ -2,6 +2,8 @@ import { projectConfig, sales, stockAllocations } from '../data/ventas'
 import { supabase } from './supabase'
 import type { ProjectConfig, Sale, StockAllocation } from '../types'
 
+const AC_SCHEME_SOLD_UNITS_LS_KEY = 'mambula_ac_scheme_sold_units'
+
 type ProjectSettingsRow = {
   project_name: string
   first_print_copies: number
@@ -11,6 +13,7 @@ type ProjectSettingsRow = {
   book_cost_usd: number
   payment_provider: string
   payment_alias: string
+  ac_scheme_sold_units: number | null
 }
 
 type StockAllocationRow = {
@@ -55,6 +58,61 @@ export type VentasData = {
   projectConfig: ProjectConfig
   stockAllocations: StockAllocation[]
   sales: Sale[]
+  /** null = sin override persistido (UI parte del inventario AC). */
+  acSchemeSoldUnits: number | null
+}
+
+function readLocalAcSchemeSoldUnits(): number | null {
+  try {
+    const raw = localStorage.getItem(AC_SCHEME_SOLD_UNITS_LS_KEY)
+    if (raw === null) {
+      return null
+    }
+    const n = Number.parseInt(raw, 10)
+    return Number.isFinite(n) && n >= 0 ? n : null
+  } catch {
+    return null
+  }
+}
+
+export async function updateAcSchemeSoldUnits(units: number): Promise<void> {
+  const clamped = Math.max(0, Math.floor(units))
+
+  if (!supabase) {
+    try {
+      localStorage.setItem(AC_SCHEME_SOLD_UNITS_LS_KEY, String(clamped))
+    } catch {
+      /* ignore quota / private mode */
+    }
+    return
+  }
+
+  const { data: row, error: readError } = await supabase
+    .from('project_settings')
+    .select('id')
+    .limit(1)
+    .maybeSingle()
+
+  if (readError) {
+    throw readError
+  }
+  if (!row?.id) {
+    throw new Error('No hay configuración de proyecto en Supabase.')
+  }
+
+  const { data: updated, error } = await supabase
+    .from('project_settings')
+    .update({ ac_scheme_sold_units: clamped })
+    .eq('id', row.id)
+    .select('ac_scheme_sold_units')
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+  if (!updated) {
+    throw new Error('No se actualizó ninguna fila en project_settings.')
+  }
 }
 
 export async function updateStockAllocations(
@@ -104,7 +162,7 @@ export async function createSale(input: SaleCreateInput): Promise<Sale> {
       paid_ars: input.paidArs,
       payment_method: input.paymentMethod,
       payment_status: input.paymentStatus,
-      invoice_status: input.invoiceStatus ?? 'no_aplica',
+      invoice_status: input.invoiceStatus ?? 'pendiente',
       delivered: input.delivered,
       billing_notes: input.billingNotes,
     })
@@ -170,7 +228,7 @@ export async function updateSale(input: SaleUpdateInput): Promise<Sale> {
       paid_ars: input.paidArs,
       payment_method: input.paymentMethod,
       payment_status: input.paymentStatus,
-      invoice_status: input.invoiceStatus ?? 'no_aplica',
+      invoice_status: input.invoiceStatus ?? 'pendiente',
       delivered: input.delivered,
       billing_notes: input.billingNotes,
     })
@@ -189,11 +247,15 @@ export const fallbackVentasData: VentasData = {
   projectConfig,
   stockAllocations,
   sales,
+  acSchemeSoldUnits: null,
 }
 
 export async function loadVentasData(): Promise<VentasData> {
   if (!supabase) {
-    return fallbackVentasData
+    return {
+      ...fallbackVentasData,
+      acSchemeSoldUnits: readLocalAcSchemeSoldUnits(),
+    }
   }
 
   const [settingsResponse, allocationsResponse, salesResponse] = await Promise.all([
@@ -220,6 +282,13 @@ export async function loadVentasData(): Promise<VentasData> {
   }
 
   const settings = settingsResponse.data as ProjectSettingsRow | null
+  const rawAcUnits = settings?.ac_scheme_sold_units
+  const acSchemeSoldUnits =
+    rawAcUnits === null || rawAcUnits === undefined
+      ? null
+      : Number.isFinite(Number(rawAcUnits))
+        ? Math.max(0, Math.floor(Number(rawAcUnits)))
+        : null
 
   return {
     projectConfig: settings ? mapProjectConfig(settings) : projectConfig,
@@ -227,6 +296,7 @@ export async function loadVentasData(): Promise<VentasData> {
       mapStockAllocation,
     ),
     sales: ((salesResponse.data ?? []) as SaleRow[]).map(mapSale),
+    acSchemeSoldUnits,
   }
 }
 
@@ -258,6 +328,16 @@ function mapStockAllocation(row: StockAllocationRow): StockAllocation {
   }
 }
 
+function normalizeInvoiceStatus(raw: string | null | undefined): NonNullable<Sale['invoiceStatus']> {
+  if (raw === 'facturado' || raw === 'pendiente' || raw === 'no_aplica') {
+    return raw
+  }
+  if (raw === 'no_facturado') {
+    return 'pendiente'
+  }
+  return 'pendiente'
+}
+
 function mapSale(row: SaleRow): Sale {
   return {
     id: row.id,
@@ -269,7 +349,7 @@ function mapSale(row: SaleRow): Sale {
     paidArs: Number(row.paid_ars),
     paymentMethod: row.payment_method,
     paymentStatus: row.payment_status,
-    invoiceStatus: row.invoice_status ?? 'no_aplica',
+    invoiceStatus: normalizeInvoiceStatus(row.invoice_status),
     delivered: row.delivered,
     billingNotes: row.billing_notes,
   }
