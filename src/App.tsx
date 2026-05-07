@@ -1236,7 +1236,7 @@ function VentasScreen({
   sales: Sale[]
   togglingDeliveryId: string | null
 }) {
-  const [filter, setFilter] = useState<'todas' | 'pendiente' | 'porEntregar'>('todas')
+  const [filter, setFilter] = useState<'todas' | 'pendiente' | 'porEntregar' | 'porFacturar'>('todas')
   const [query, setQuery] = useState('')
   const [sellerFilter, setSellerFilter] = useState<string | null>(null)
 
@@ -1249,7 +1249,8 @@ function VentasScreen({
       const matchesFilter =
         filter === 'todas' ||
         (filter === 'pendiente' && isSalePending(sale)) ||
-        (filter === 'porEntregar' && !isDelivered(sale))
+        (filter === 'porEntregar' && !isDelivered(sale)) ||
+        (filter === 'porFacturar' && isInvoicePending(sale))
       const matchesQuery = sale.buyer.toLowerCase().includes(query.toLowerCase())
 
       return matchesFilter && matchesQuery
@@ -1258,6 +1259,7 @@ function VentasScreen({
 
   const pendingCount = sellerScopedSales.filter(isSalePending).length
   const deliveryCount = sellerScopedSales.filter((sale) => !isDelivered(sale)).length
+  const invoicePendingCount = sellerScopedSales.filter(isInvoicePending).length
   const sellerTotals = useMemo(() => {
     return sellerNames.map((seller) => {
       const sellerSales = sales.filter((sale) => sale.seller === seller)
@@ -1317,6 +1319,7 @@ function VentasScreen({
           { key: 'todas', label: 'Todas', count: sellerScopedSales.length },
           { key: 'pendiente', label: 'Por pagar', count: pendingCount },
           { key: 'porEntregar', label: 'Por entregar', count: deliveryCount },
+          { key: 'porFacturar', label: 'Por facturar', count: invoicePendingCount },
         ]}
         onChange={setFilter}
       />
@@ -2053,10 +2056,10 @@ function PromocionalesScreen() {
           <strong className="accent-orange">{numberFormatter.format(total - delivered)}</strong>
         </button>
       </div>
-      <PromoSection filter={filter} group="equipo" rows={promoRows.equipo} tag="Equipo" title="Equipo Mambula" onToggleDelivered={toggleDelivered} />
-      <PromoSection filter={filter} group="colaboracion" rows={promoRows.colaboracion} tag="Colaboración" title="Colaboradores" onToggleDelivered={toggleDelivered} />
-      <PromoSection filter={filter} group="colegio" rows={promoRows.colegio} tag="Colegio" title="Colegios" onToggleDelivered={toggleDelivered} />
-      <PromoSection filter={filter} group="influencers" rows={promoRows.influencers} tag="Influencers" title="Prensa & influencers" onToggleDelivered={toggleDelivered} />
+      <PromoSection filter={filter} group="equipo" rows={promoRows.equipo} title="Equipo Mambula" onToggleDelivered={toggleDelivered} />
+      <PromoSection filter={filter} group="colaboracion" rows={promoRows.colaboracion} title="Colaboradores" onToggleDelivered={toggleDelivered} />
+      <PromoSection filter={filter} group="colegio" rows={promoRows.colegio} title="Colegios" onToggleDelivered={toggleDelivered} />
+      <PromoSection filter={filter} group="influencers" rows={promoRows.influencers} title="Prensa & influencers" onToggleDelivered={toggleDelivered} />
       {promoDraft ? (
         <NewPromoSheet
           draft={promoDraft}
@@ -2347,14 +2350,12 @@ function PromoSection({
   group,
   onToggleDelivered,
   rows,
-  tag,
   title,
 }: {
   filter: 'todos' | 'pendientes' | 'entregados'
   group: keyof typeof promoData
   onToggleDelivered: (group: keyof typeof promoData, nombre: string) => void
   rows: Array<{ nombre: string; unidades: number; entregado: boolean }>
-  tag: string
   title: string
 }) {
   const visibleRows = rows.filter((row) => {
@@ -2370,7 +2371,6 @@ function PromoSection({
     <section className="promo-section">
       <div className="promo-heading">
         <div>
-          <span>{tag}</span>
           <h2>{title}</h2>
         </div>
         <strong>{delivered}/{total} · {pct}%</strong>
@@ -2751,6 +2751,11 @@ function getSaleStatus(sale: Sale): 'pagado' | 'parcial' | 'pendiente' {
 
 function isDelivered(sale: Sale) {
   return (sale.delivered ?? '').trim().toLowerCase() === 'si'
+}
+
+/** Facturación pendiente (no incluye «no se factura» ni ya facturadas). */
+function isInvoicePending(sale: Sale): boolean {
+  return (sale.invoiceStatus ?? 'pendiente') === 'pendiente'
 }
 
 /** Pendiente de entrega y de cobro (figura solo en Encargos, no en la lista principal de Ventas). */
