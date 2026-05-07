@@ -1,9 +1,10 @@
 import './App.css'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   computeAbrazandoGananciasFromUnits,
   computeAbrInventorySplit,
   computeVentasMambulaSplits,
+  estimateArsPerUsdFromExpenseRates,
   settlementsTotalForPartner,
   AC_STOCK_NAME,
   WONKY_ARS_PER_VENTA_COPY,
@@ -12,6 +13,7 @@ import {
 } from './data/partnerSplits'
 import { calculateSaleBreakdown } from './data/ventas'
 import LiquidacionesVentasCard from './components/LiquidacionesVentasCard'
+import ProfitCard from './components/ProfitCard'
 import { isSupabaseConfigured } from './lib/supabase'
 import { createPartnerSettlement, loadPartnerSettlements } from './lib/partnerSettlementsRepository'
 import {
@@ -65,6 +67,25 @@ type Expense = {
   rate: number | null
   usd: number
   payer: string
+}
+
+const sociasProfitOrder = ['Delfi', 'Mechi', 'Susan'] as const satisfies readonly SplitPartnerKey[]
+
+function expenseRowArs(item: Expense, fallbackArsPerUsd: number): number {
+  if (item.pesos != null && Number.isFinite(item.pesos) && item.pesos > 0) {
+    return item.pesos
+  }
+
+  const rate =
+    item.rate != null && Number.isFinite(item.rate) && item.rate > 0 ? item.rate : fallbackArsPerUsd
+
+  return item.usd * rate
+}
+
+function sumExpensesArsForPayer(expenses: Expense[], payer: string, fallbackArsPerUsd: number): number {
+  return expenses
+    .filter((item) => item.payer === payer)
+    .reduce((sum, item) => sum + expenseRowArs(item, fallbackArsPerUsd), 0)
 }
 
 const numberFormatter = new Intl.NumberFormat('es-AR')
@@ -182,6 +203,7 @@ function App() {
   const [tab, setTab] = useState<AppTab>(() => getTabFromLocation())
   const [ventasData, setVentasData] = useState<VentasData>(fallbackVentasData)
   const [partnerSettlements, setPartnerSettlements] = useState<PartnerSettlement[]>([])
+  const [expenses, setExpenses] = useState<Expense[]>(() => [...gastosData])
   const [acSchemeSoldQty, setAcSchemeSoldQty] = useState(0)
   const [acSliderPersistStatus, setAcSliderPersistStatus] = useState<
     'idle' | 'saving' | 'saved' | 'error'
@@ -634,6 +656,7 @@ function App() {
           acSliderGains={acSliderGains}
           copyPaymentAlias={copyPaymentAlias}
           copyStatus={copyStatus}
+          expenses={expenses}
           grossSalesArs={grossSalesArs}
           loadError={loadError}
           loading={loading}
@@ -668,7 +691,7 @@ function App() {
         />
       ) : null}
       {tab === 'promo' ? <PromocionalesScreen /> : null}
-      {tab === 'gastos' ? <GastosScreen /> : null}
+      {tab === 'gastos' ? <GastosScreen expenses={expenses} setExpenses={setExpenses} /> : null}
 
       {selectedSale && !saleEditSheetOpen ? (
         saleDetailEncargoSummary ? (
@@ -840,6 +863,7 @@ function HomeScreen({
   acSliderGains,
   copyPaymentAlias,
   copyStatus,
+  expenses,
   grossSalesArs,
   loadError,
   loading,
@@ -860,6 +884,7 @@ function HomeScreen({
   acSliderGains: AbrazandoGananciasPreview
   copyPaymentAlias: () => void
   copyStatus: 'idle' | 'copied' | 'error'
+  expenses: Expense[]
   grossSalesArs: number
   loadError: string | null
   loading: boolean
@@ -906,6 +931,33 @@ function HomeScreen({
       }),
     [partnerGainRows, partnerSettlements],
   )
+
+  const expenseFallbackArsPerUsd = useMemo(
+    () => estimateArsPerUsdFromExpenseRates(expenses.map((item) => item.rate)),
+    [expenses],
+  )
+
+  const sociasProfitRows = useMemo(() => {
+    const acEach = acSliderGains.gananciaPorSociaAcArs
+
+    return sociasProfitOrder.map((partner) => {
+      const ventasRow = partnerGainRows.find((row) => row.partner === partner)
+      const gananciaMambulaArs = ventasRow?.totalGainArs ?? 0
+      const gastosArs = sumExpensesArsForPayer(expenses, partner, expenseFallbackArsPerUsd)
+
+      return {
+        partner,
+        gananciaAcArs: acEach,
+        gananciaMambulaArs,
+        gastosArs,
+      }
+    })
+  }, [
+    acSliderGains.gananciaPorSociaAcArs,
+    expenseFallbackArsPerUsd,
+    expenses,
+    partnerGainRows,
+  ])
 
   function startEditingInventory() {
     setStockDraft(createStockAllocationDraft(stockAllocations))
@@ -1207,6 +1259,16 @@ function HomeScreen({
           totalEjemplares={soldCopies}
           wonkyPorLibroArs={WONKY_ARS_PER_VENTA_COPY}
         />
+
+        <ProfitCard
+          socias={sociasProfitRows.map((row) => ({
+            nombre: row.partner,
+            liqAC: row.gananciaAcArs,
+            liqMambula: row.gananciaMambulaArs,
+            gastos: row.gastosArs,
+          }))}
+        />
+
         {partnerSettlements.length > 0 ? (
           <div className="ios-card">
             <div className="settlement-history-block settlement-history-block--flush">
@@ -2155,9 +2217,14 @@ function PromocionalesScreen() {
   )
 }
 
-function GastosScreen() {
+function GastosScreen({
+  expenses,
+  setExpenses,
+}: {
+  expenses: Expense[]
+  setExpenses: Dispatch<SetStateAction<Expense[]>>
+}) {
   const [filter, setFilter] = useState('todos')
-  const [expenses, setExpenses] = useState(gastosData)
   const [expenseDraft, setExpenseDraft] = useState<ExpenseDraft | null>(null)
   const [expenseError, setExpenseError] = useState<string | null>(null)
   const filtered = filter === 'todos' ? expenses : expenses.filter((item) => item.payer === filter)
