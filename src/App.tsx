@@ -21,6 +21,7 @@ import {
   type InventoryMovementBreakdown,
 } from './lib/inventoryProgress'
 import { loadPromoRows, savePromoRows, type PromoRowStored, type PromoRowsStored } from './lib/promocionalesStorage'
+import { fetchPromoRowsFromSupabase, savePromoRowsRemote } from './lib/promocionalesRepository'
 import { isSupabaseConfigured } from './lib/supabase'
 import { createPartnerSettlement, loadPartnerSettlements } from './lib/partnerSettlementsRepository'
 import {
@@ -264,10 +265,42 @@ function App() {
   const [togglingDeliveryId, setTogglingDeliveryId] = useState<string | null>(null)
   const [savingInvoiceSaleId, setSavingInvoiceSaleId] = useState<string | null>(null)
   const [promoRows, setPromoRows] = useState<PromoRowsStored>(() => loadPromoRows(promoData as PromoRowsStored))
+  const [promoRemoteSaveEnabled, setPromoRemoteSaveEnabled] = useState(() => !isSupabaseConfigured)
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return
+    let cancelled = false
+
+    void fetchPromoRowsFromSupabase(promoData as PromoRowsStored)
+      .then((rows) => {
+        if (!cancelled) {
+          setPromoRows(rows)
+        }
+      })
+      .catch(() => {
+        /* mantener estado inicial (localStorage + defaults) */
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setPromoRemoteSaveEnabled(true)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     savePromoRows(promoRows)
-  }, [promoRows])
+    if (!promoRemoteSaveEnabled || !isSupabaseConfigured) return
+
+    const timer = window.setTimeout(() => {
+      void savePromoRowsRemote(promoRows).catch(() => {})
+    }, 450)
+
+    return () => window.clearTimeout(timer)
+  }, [promoRows, promoRemoteSaveEnabled])
 
   useEffect(() => {
     let ignore = false

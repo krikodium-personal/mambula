@@ -51,25 +51,30 @@ function normalizeGroup(raw: unknown): PromoRowStored[] | null {
   return rows
 }
 
+/** Combina JSON remoto o de localStorage con los valores por defecto de la app (misma regla que antes). */
+export function mergePromoRowsFromRemotePayload(parsed: unknown, defaultRows: PromoRowsStored): PromoRowsStored {
+  if (!parsed || typeof parsed !== 'object') return defaultRows
+
+  const blob = parsed as Record<string, unknown>
+  const next: PromoRowsStored = { ...defaultRows }
+
+  for (const key of GROUP_KEYS) {
+    const normalized = normalizeGroup(blob[key])
+    if (normalized !== null && normalized.length > 0) {
+      next[key] = normalized
+    }
+  }
+
+  return next
+}
+
 export function loadPromoRows(defaultRows: PromoRowsStored): PromoRowsStored {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return defaultRows
 
     const parsed: unknown = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object') return defaultRows
-
-    const blob = parsed as Record<string, unknown>
-    const next: PromoRowsStored = { ...defaultRows }
-
-    for (const key of GROUP_KEYS) {
-      const normalized = normalizeGroup(blob[key])
-      if (normalized !== null && normalized.length > 0) {
-        next[key] = normalized
-      }
-    }
-
-    return next
+    return mergePromoRowsFromRemotePayload(parsed, defaultRows)
   } catch {
     return defaultRows
   }
