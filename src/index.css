@@ -13,6 +13,8 @@
   --red: #ff3b30;
   --gray-fill: rgba(120, 120, 128, 0.12);
   --gray-fill-2: rgba(120, 120, 128, 0.16);
+  --inventory-promo: #af52de;
+  --inventory-remainder: rgba(120, 120, 128, 0.42);
   --sans:
     -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', Inter,
     system-ui, sans-serif;

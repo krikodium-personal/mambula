@@ -14,6 +14,13 @@ import {
 import { calculateSaleBreakdown } from './data/ventas'
 import LiquidacionesVentasCard from './components/LiquidacionesVentasCard'
 import ProfitCard from './components/ProfitCard'
+import {
+  breakdownInventoryMovement,
+  promoDeliveredUnitsForStockRow,
+  soldUnitsAttributedToSeller,
+  type InventoryMovementBreakdown,
+} from './lib/inventoryProgress'
+import { loadPromoRows, savePromoRows, type PromoRowStored, type PromoRowsStored } from './lib/promocionalesStorage'
 import { isSupabaseConfigured } from './lib/supabase'
 import { createPartnerSettlement, loadPartnerSettlements } from './lib/partnerSettlementsRepository'
 import {
@@ -45,12 +52,41 @@ type SaleDraft = {
   billingNotes: string
 }
 type StockAllocationDraft = Record<string, { copies: string; boxes: string }>
+
+/** Filas de `stock_allocations` que no se muestran en el inventario del Home (se gestionan aparte). */
+const HOME_INVENTORY_EXCLUDED_NAMES = new Set(['Promocionales'])
+
+function allocationsForHomeInventoryTable(allocations: StockAllocation[]): StockAllocation[] {
+  return allocations.filter((item) => !HOME_INVENTORY_EXCLUDED_NAMES.has(item.name))
+}
+
 type PromoGroup = keyof typeof promoData
+type PromoDeliveredBy = 'Delfi' | 'Mechi' | 'Susan'
+
+const PROMO_DELIVER_OPTIONS: Array<{ key: PromoDeliveredBy; label: string }> = [
+  { key: 'Delfi', label: 'Delfi' },
+  { key: 'Mechi', label: 'Mechi' },
+  { key: 'Susan', label: 'Susan' },
+]
+
+const PROMO_ENTREGADO_SI_NO_OPTIONS: Array<{ key: 'SI' | 'NO'; label: string }> = [
+  { key: 'SI', label: 'Sí' },
+  { key: 'NO', label: 'No' },
+]
+
 type PromoDraft = {
   nombre: string
   unidades: string
   group: PromoGroup
-  entregado: string
+  entregado: 'SI' | 'NO'
+  entregadoPor: PromoDeliveredBy
+}
+
+type PromoEditDraft = {
+  nombre: string
+  unidades: string
+  entregado: 'SI' | 'NO'
+  entregadoPor: PromoDeliveredBy
 }
 type ExpenseDraft = {
   concept: string
@@ -114,46 +150,46 @@ const tabByRoute = Object.fromEntries(
 
 const promoData = {
   equipo: [
-    { nombre: 'Fede', unidades: 1, entregado: true },
-    { nombre: 'Lali', unidades: 1, entregado: false },
-    { nombre: 'Diego', unidades: 1, entregado: false },
-    { nombre: 'Wonky', unidades: 10, entregado: false },
-    { nombre: 'Mery Casabal', unidades: 1, entregado: false },
-    { nombre: 'Belu LM', unidades: 1, entregado: false },
-    { nombre: 'Susan', unidades: 5, entregado: false },
-    { nombre: 'Mechi', unidades: 5, entregado: true },
-    { nombre: 'Delfi', unidades: 5, entregado: true },
+    { nombre: 'Fede', unidades: 1, entregado: true, entregadoPor: null },
+    { nombre: 'Lali', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Diego', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Wonky', unidades: 10, entregado: false, entregadoPor: null },
+    { nombre: 'Mery Casabal', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Belu LM', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Susan', unidades: 5, entregado: false, entregadoPor: null },
+    { nombre: 'Mechi', unidades: 5, entregado: true, entregadoPor: null },
+    { nombre: 'Delfi', unidades: 5, entregado: true, entregadoPor: null },
   ],
   colaboracion: [
-    { nombre: 'Dani', unidades: 1, entregado: false },
-    { nombre: 'Fide', unidades: 1, entregado: true },
-    { nombre: 'Lujan', unidades: 1, entregado: true },
-    { nombre: 'Magdalena', unidades: 1, entregado: false },
-    { nombre: 'Anita', unidades: 1, entregado: true },
-    { nombre: 'Tobi', unidades: 1, entregado: true },
-    { nombre: 'Agus Vera', unidades: 1, entregado: false },
-    { nombre: 'Marisol Otero', unidades: 1, entregado: false },
-    { nombre: 'Flor Otero', unidades: 1, entregado: false },
-    { nombre: 'Rocio Hernandez', unidades: 1, entregado: true },
-    { nombre: 'Juana Ibañez', unidades: 1, entregado: false },
-    { nombre: 'Mora Rivarola', unidades: 1, entregado: false },
-    { nombre: 'Juana Silveyra', unidades: 1, entregado: false },
-    { nombre: 'Paz Díaz Colodrero', unidades: 1, entregado: false },
-    { nombre: 'Vane Butera', unidades: 1, entregado: false },
-    { nombre: 'Agus Caballero', unidades: 1, entregado: false },
-    { nombre: 'Stephie Sibbald', unidades: 1, entregado: false },
-    { nombre: 'Clarita Eickert', unidades: 1, entregado: false },
+    { nombre: 'Dani', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Fide', unidades: 1, entregado: true, entregadoPor: null },
+    { nombre: 'Lujan', unidades: 1, entregado: true, entregadoPor: null },
+    { nombre: 'Magdalena', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Anita', unidades: 1, entregado: true, entregadoPor: null },
+    { nombre: 'Tobi', unidades: 1, entregado: true, entregadoPor: null },
+    { nombre: 'Agus Vera', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Marisol Otero', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Flor Otero', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Rocio Hernandez', unidades: 1, entregado: true, entregadoPor: null },
+    { nombre: 'Juana Ibañez', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Mora Rivarola', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Juana Silveyra', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Paz Díaz Colodrero', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Vane Butera', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Agus Caballero', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Stephie Sibbald', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Clarita Eickert', unidades: 1, entregado: false, entregadoPor: null },
   ],
   influencers: [
-    { nombre: 'Silvia Figgiacone', unidades: 1, entregado: false },
-    { nombre: 'Jose Pelayo', unidades: 1, entregado: false },
-    { nombre: 'Euge Boni', unidades: 1, entregado: false },
-    { nombre: 'Christian Plebst', unidades: 1, entregado: false },
-    { nombre: 'Mejor Descalzos', unidades: 1, entregado: false },
-    { nombre: 'Rochi', unidades: 0, entregado: false },
-    { nombre: 'Julieta Prandi', unidades: 0, entregado: false },
-    { nombre: 'Diego Torres', unidades: 0, entregado: false },
-    { nombre: 'Dai Ruggeri', unidades: 0, entregado: false },
+    { nombre: 'Silvia Figgiacone', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Jose Pelayo', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Euge Boni', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Christian Plebst', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Mejor Descalzos', unidades: 1, entregado: false, entregadoPor: null },
+    { nombre: 'Rochi', unidades: 0, entregado: false, entregadoPor: null },
+    { nombre: 'Julieta Prandi', unidades: 0, entregado: false, entregadoPor: null },
+    { nombre: 'Diego Torres', unidades: 0, entregado: false, entregadoPor: null },
+    { nombre: 'Dai Ruggeri', unidades: 0, entregado: false, entregadoPor: null },
   ],
   colegio: [],
 }
@@ -227,6 +263,11 @@ function App() {
   const [stockAllocationError, setStockAllocationError] = useState<string | null>(null)
   const [togglingDeliveryId, setTogglingDeliveryId] = useState<string | null>(null)
   const [savingInvoiceSaleId, setSavingInvoiceSaleId] = useState<string | null>(null)
+  const [promoRows, setPromoRows] = useState<PromoRowsStored>(() => loadPromoRows(promoData as PromoRowsStored))
+
+  useEffect(() => {
+    savePromoRows(promoRows)
+  }, [promoRows])
 
   useEffect(() => {
     let ignore = false
@@ -668,6 +709,8 @@ function App() {
           saveStockAllocationChanges={saveStockAllocationChanges}
           savingStockAllocations={savingStockAllocations}
           soldCopies={soldCopies}
+          promoRows={promoRows}
+          sales={sales}
           stockAllocationError={stockAllocationError}
           stockAllocations={stockAllocations}
         />
@@ -690,7 +733,9 @@ function App() {
           onVenderEncargo={openEncargoVenderSheet}
         />
       ) : null}
-      {tab === 'promo' ? <PromocionalesScreen /> : null}
+      {tab === 'promo' ? (
+        <PromocionalesScreen promoRows={promoRows} setPromoRows={setPromoRows} />
+      ) : null}
       {tab === 'gastos' ? <GastosScreen expenses={expenses} setExpenses={setExpenses} /> : null}
 
       {selectedSale && !saleEditSheetOpen ? (
@@ -856,6 +901,74 @@ function PartnerSettlementSheet({
   )
 }
 
+function InventoryStockBar({
+  promo,
+  remainder,
+  sold,
+}: {
+  promo: number
+  remainder: number
+  sold: number
+}) {
+  const total = promo + sold + remainder
+  if (total <= 0) {
+    return <div className="progress-track inventory-stock-bar tall empty" aria-hidden="true" />
+  }
+
+  return (
+    <div className="progress-track inventory-stock-bar tall" aria-hidden="true">
+      {promo > 0 ? <div className="inventory-stock-segment promo" style={{ flex: promo }} /> : null}
+      {sold > 0 ? <div className="inventory-stock-segment sold" style={{ flex: sold }} /> : null}
+      {remainder > 0 ? <div className="inventory-stock-segment remainder" style={{ flex: remainder }} /> : null}
+    </div>
+  )
+}
+
+function InventoryStockCounts({
+  isSociaRow,
+  movement,
+}: {
+  isSociaRow: boolean
+  movement: InventoryMovementBreakdown
+}) {
+  if (isSociaRow) {
+    return (
+      <div className="inventory-stock-counts inventory-stock-counts--socia">
+        <div className="inventory-stock-count-cell">
+          <span className="inventory-stock-count-dot promo" />
+          <span className="inventory-stock-count-label">promo</span>
+          <span className="inventory-stock-count-value">{numberFormatter.format(movement.promo)}</span>
+        </div>
+        <div className="inventory-stock-count-cell">
+          <span className="inventory-stock-count-dot sold" />
+          <span className="inventory-stock-count-label">vendidos</span>
+          <span className="inventory-stock-count-value">{numberFormatter.format(movement.sold)}</span>
+        </div>
+        <div className="inventory-stock-count-cell">
+          <span className="inventory-stock-count-dot remainder" />
+          <span className="inventory-stock-count-label">stock</span>
+          <span className="inventory-stock-count-value">{numberFormatter.format(movement.remainder)}</span>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="inventory-stock-counts inventory-stock-counts--ac">
+      <div className="inventory-stock-count-cell">
+        <span className="inventory-stock-count-dot sold" />
+        <span className="inventory-stock-count-label">vendidos</span>
+        <span className="inventory-stock-count-value">{numberFormatter.format(movement.sold)}</span>
+      </div>
+      <div className="inventory-stock-count-cell">
+        <span className="inventory-stock-count-dot remainder" />
+        <span className="inventory-stock-count-label">stock</span>
+        <span className="inventory-stock-count-value">{numberFormatter.format(movement.remainder)}</span>
+      </div>
+    </div>
+  )
+}
+
 function HomeScreen({
   abrSplit,
   acSchemeSoldQty,
@@ -871,6 +984,8 @@ function HomeScreen({
   partnerGainRows,
   partnerSettlements,
   projectConfig,
+  promoRows,
+  sales,
   savePartnerSettlement,
   saveStockAllocationChanges,
   savingStockAllocations,
@@ -892,6 +1007,8 @@ function HomeScreen({
   partnerGainRows: PartnerGainBreakdown[]
   partnerSettlements: PartnerSettlement[]
   projectConfig: VentasData['projectConfig']
+  promoRows: PromoRowsStored
+  sales: Sale[]
   savePartnerSettlement: (input: {
     partner: SplitPartnerKey
     amountArs: number
@@ -907,13 +1024,18 @@ function HomeScreen({
   const [abrDatosOpen, setAbrDatosOpen] = useState(false)
   const [ventasMambulaNoteOpen, setVentasMambulaNoteOpen] = useState(false)
   const [editingInventory, setEditingInventory] = useState(false)
+  const inventoryTableRows = useMemo(() => {
+    const rows = allocationsForHomeInventoryTable(stockAllocations)
+    const acRows = rows.filter((row) => row.name === AC_STOCK_NAME)
+    const otherRows = rows.filter((row) => row.name !== AC_STOCK_NAME)
+    return [...otherRows, ...acRows]
+  }, [stockAllocations])
   const [stockDraft, setStockDraft] = useState<StockAllocationDraft>(() => {
-    return createStockAllocationDraft(stockAllocations)
+    return createStockAllocationDraft(allocationsForHomeInventoryTable(stockAllocations))
   })
   const [localStockError, setLocalStockError] = useState<string | null>(null)
   const availableCopies = projectConfig.firstPrintRun.copies - soldCopies
   const copiesPerBox = projectConfig.firstPrintRun.copies / projectConfig.firstPrintRun.boxes
-  const allocatedCopies = stockAllocations.reduce((total, item) => total + item.copies, 0)
   const inventoryError = localStockError ?? stockAllocationError
   const acSliderMax = Math.max(0, abrSplit.acCopies)
   const sliderValue = Math.min(Math.max(0, acSchemeSoldQty), acSliderMax)
@@ -960,19 +1082,19 @@ function HomeScreen({
   ])
 
   function startEditingInventory() {
-    setStockDraft(createStockAllocationDraft(stockAllocations))
+    setStockDraft(createStockAllocationDraft(inventoryTableRows))
     setLocalStockError(null)
     setEditingInventory(true)
   }
 
   function cancelEditingInventory() {
-    setStockDraft(createStockAllocationDraft(stockAllocations))
+    setStockDraft(createStockAllocationDraft(inventoryTableRows))
     setLocalStockError(null)
     setEditingInventory(false)
   }
 
   async function saveEditingInventory() {
-    const nextAllocations = stockAllocations.map((allocation) => ({
+    const nextAllocations = inventoryTableRows.map((allocation) => ({
       name: allocation.name,
       copies: parseStockNumber(stockDraft[allocation.name]?.copies),
       boxes: parseStockNumber(stockDraft[allocation.name]?.boxes),
@@ -1054,50 +1176,61 @@ function HomeScreen({
               <span>Ejemplares</span>
               <span>Cajas</span>
             </div>
-            {stockAllocations.map((item) => (
-              <div className="inventory-row" key={item.name}>
-                <div className="inventory-values">
-                  <span>{item.name}</span>
-                  {editingInventory ? (
-                    <>
-                      <input
-                        inputMode="numeric"
-                        value={stockDraft[item.name]?.copies ?? ''}
-                        onChange={(event) => setStockDraft({
-                          ...stockDraft,
-                          [item.name]: {
-                            copies: event.target.value,
-                            boxes: stockDraft[item.name]?.boxes ?? '',
-                          },
-                        })}
-                      />
-                      <input
-                        inputMode="numeric"
-                        value={stockDraft[item.name]?.boxes ?? ''}
-                        onChange={(event) => setStockDraft({
-                          ...stockDraft,
-                          [item.name]: {
-                            copies: stockDraft[item.name]?.copies ?? '',
-                            boxes: event.target.value,
-                          },
-                        })}
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <span>{numberFormatter.format(item.copies)}</span>
-                      <span>{numberFormatter.format(item.boxes)}</span>
-                    </>
-                  )}
-                </div>
-                <div className="progress-track">
-                  <div
-                    className="progress-fill"
-                    style={{ width: `${(item.copies / allocatedCopies) * 100}%` }}
+            {inventoryTableRows.map((item) => {
+              const allocationCopies = editingInventory
+                ? parseStockNumber(stockDraft[item.name]?.copies)
+                : item.copies
+
+              const promoUnits = promoDeliveredUnitsForStockRow(promoRows, item.name)
+              const soldUnits = soldUnitsAttributedToSeller(sales, item.name)
+              const movement = breakdownInventoryMovement(allocationCopies, promoUnits, soldUnits, item.name)
+              const isSociaRow = item.name === 'Delfi' || item.name === 'Mechi' || item.name === 'Susan'
+
+              return (
+                <div className="inventory-row" key={item.name}>
+                  <div className="inventory-values">
+                    <span>{item.name}</span>
+                    {editingInventory ? (
+                      <>
+                        <input
+                          inputMode="numeric"
+                          value={stockDraft[item.name]?.copies ?? ''}
+                          onChange={(event) => setStockDraft({
+                            ...stockDraft,
+                            [item.name]: {
+                              copies: event.target.value,
+                              boxes: stockDraft[item.name]?.boxes ?? '',
+                            },
+                          })}
+                        />
+                        <input
+                          inputMode="numeric"
+                          value={stockDraft[item.name]?.boxes ?? ''}
+                          onChange={(event) => setStockDraft({
+                            ...stockDraft,
+                            [item.name]: {
+                              copies: stockDraft[item.name]?.copies ?? '',
+                              boxes: event.target.value,
+                            },
+                          })}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <span>{numberFormatter.format(item.copies)}</span>
+                        <span>{numberFormatter.format(item.boxes)}</span>
+                      </>
+                    )}
+                  </div>
+                  <InventoryStockBar
+                    promo={movement.promo}
+                    remainder={movement.remainder}
+                    sold={movement.sold}
                   />
+                  <InventoryStockCounts isSociaRow={isSociaRow} movement={movement} />
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
           {editingInventory ? (
             <div className="edit-actions inventory-actions">
@@ -1349,7 +1482,9 @@ function VentasScreen({
   const deliveryCount = sellerScopedSales.filter((sale) => !isDelivered(sale)).length
   const invoicePendingCount = sellerScopedSales.filter(isInvoicePending).length
   const sellerTotals = useMemo(() => {
-    return sellerNames.map((seller) => {
+    return sellerNames
+      .filter((seller) => seller !== AC_STOCK_NAME)
+      .map((seller) => {
       const sellerSales = sales.filter((sale) => sale.seller === seller)
 
       return {
@@ -1394,7 +1529,7 @@ function VentasScreen({
             }}
             type="button"
           >
-            <span>{item.seller === 'Abrazandocuentos' ? 'AC' : item.seller}</span>
+            <span>{item.seller}</span>
             <strong>{formatCompact(item.total)}</strong>
             <p>{item.count} {item.count === 1 ? 'venta' : 'ventas'}</p>
           </button>
@@ -2112,22 +2247,53 @@ function SaleDraftSheet({
     </div>
   )
 }
-function PromocionalesScreen() {
+function PromocionalesScreen({
+  promoRows,
+  setPromoRows,
+}: {
+  promoRows: PromoRowsStored
+  setPromoRows: Dispatch<SetStateAction<PromoRowsStored>>
+}) {
   const [filter, setFilter] = useState<'todos' | 'pendientes' | 'entregados'>('todos')
-  const [promoRows, setPromoRows] = useState(promoData)
   const [promoDraft, setPromoDraft] = useState<PromoDraft | null>(null)
   const [promoError, setPromoError] = useState<string | null>(null)
+  const [promoDeliverPick, setPromoDeliverPick] = useState<{ group: PromoGroup; nombre: string } | null>(
+    null,
+  )
+  const [promoEditTarget, setPromoEditTarget] = useState<{ group: PromoGroup; nombre: string } | null>(null)
+
   const all = [...promoRows.equipo, ...promoRows.colaboracion, ...promoRows.influencers, ...promoRows.colegio]
   const total = all.reduce((sum, row) => sum + row.unidades, 0)
   const delivered = all.filter((row) => row.entregado).reduce((sum, row) => sum + row.unidades, 0)
 
-  function toggleDelivered(group: keyof typeof promoData, nombre: string) {
+  function handlePromoCheckTap(group: PromoGroup, nombre: string) {
+    const row = promoRows[group].find((item) => item.nombre === nombre)
+    if (!row) return
+
+    if (row.entregado) {
+      setPromoRows((current) => ({
+        ...current,
+        [group]: current[group].map((item) =>
+          item.nombre === nombre ? { ...item, entregado: false, entregadoPor: null } : item,
+        ),
+      }))
+    } else {
+      setPromoDeliverPick({ group, nombre })
+    }
+  }
+
+  function confirmPromoDelivered(by: PromoDeliveredBy) {
+    if (!promoDeliverPick) return
+
+    const { group, nombre } = promoDeliverPick
+
     setPromoRows((current) => ({
       ...current,
-      [group]: current[group].map((row) => (
-        row.nombre === nombre ? { ...row, entregado: !row.entregado } : row
-      )),
+      [group]: current[group].map((item) =>
+        item.nombre === nombre ? { ...item, entregado: true, entregadoPor: by } : item,
+      ),
     }))
+    setPromoDeliverPick(null)
   }
 
   function savePromo() {
@@ -2149,11 +2315,46 @@ function PromocionalesScreen() {
           nombre,
           unidades,
           entregado: promoDraft.entregado === 'SI',
+          entregadoPor: promoDraft.entregado === 'SI' ? promoDraft.entregadoPor : null,
         },
       ],
     }))
     setPromoDraft(null)
     setPromoError(null)
+  }
+
+  const promoEditRow =
+    promoEditTarget &&
+    promoRows[promoEditTarget.group].find((item) => item.nombre === promoEditTarget.nombre)
+
+  function submitPromoEdit(draft: PromoEditDraft): string | null {
+    if (!promoEditTarget) return 'Sesión inválida.'
+
+    const { group, nombre: nombreOriginal } = promoEditTarget
+    const nombre = draft.nombre.trim()
+    if (!nombre) return 'Completá el nombre.'
+
+    const unidades = parseStockNumber(draft.unidades)
+    const list = promoRows[group]
+    const idx = list.findIndex((item) => item.nombre === nombreOriginal)
+    if (idx === -1) return 'No se encontró el registro.'
+
+    const nombreLc = nombre.toLowerCase()
+    if (list.some((item, i) => i !== idx && item.nombre.trim().toLowerCase() === nombreLc)) {
+      return 'Ya existe otro registro con ese nombre en esta lista.'
+    }
+
+    const entregado = draft.entregado === 'SI'
+    const entregadoPor = entregado ? draft.entregadoPor : null
+
+    setPromoRows((current) => ({
+      ...current,
+      [group]: current[group].map((item, i) =>
+        i === idx ? { nombre, unidades, entregado, entregadoPor } : item,
+      ),
+    }))
+
+    return null
   }
 
   return (
@@ -2189,10 +2390,54 @@ function PromocionalesScreen() {
           <strong className="accent-orange">{numberFormatter.format(total - delivered)}</strong>
         </button>
       </div>
-      <PromoSection filter={filter} group="equipo" rows={promoRows.equipo} title="Equipo Mambula" onToggleDelivered={toggleDelivered} />
-      <PromoSection filter={filter} group="colaboracion" rows={promoRows.colaboracion} title="Colaboradores" onToggleDelivered={toggleDelivered} />
-      <PromoSection filter={filter} group="colegio" rows={promoRows.colegio} title="Colegios" onToggleDelivered={toggleDelivered} />
-      <PromoSection filter={filter} group="influencers" rows={promoRows.influencers} title="Prensa & influencers" onToggleDelivered={toggleDelivered} />
+      <PromoSection
+        filter={filter}
+        group="equipo"
+        rows={promoRows.equipo}
+        title="Equipo Mambula"
+        onEditRow={(group, nombre) => setPromoEditTarget({ group, nombre })}
+        onPromoCheckTap={handlePromoCheckTap}
+      />
+      <PromoSection
+        filter={filter}
+        group="colaboracion"
+        rows={promoRows.colaboracion}
+        title="Colaboradores"
+        onEditRow={(group, nombre) => setPromoEditTarget({ group, nombre })}
+        onPromoCheckTap={handlePromoCheckTap}
+      />
+      <PromoSection
+        filter={filter}
+        group="colegio"
+        rows={promoRows.colegio}
+        title="Colegios"
+        onEditRow={(group, nombre) => setPromoEditTarget({ group, nombre })}
+        onPromoCheckTap={handlePromoCheckTap}
+      />
+      <PromoSection
+        filter={filter}
+        group="influencers"
+        rows={promoRows.influencers}
+        title="Prensa & influencers"
+        onEditRow={(group, nombre) => setPromoEditTarget({ group, nombre })}
+        onPromoCheckTap={handlePromoCheckTap}
+      />
+      {promoEditTarget && promoEditRow ? (
+        <PromoEditSheet
+          key={`${promoEditTarget.group}-${promoEditTarget.nombre}`}
+          row={promoEditRow}
+          onClose={() => setPromoEditTarget(null)}
+          onSave={submitPromoEdit}
+        />
+      ) : null}
+      {promoDeliverPick ? (
+        <PromoDeliverWhoSheet
+          key={`${promoDeliverPick.group}-${promoDeliverPick.nombre}`}
+          nombre={promoDeliverPick.nombre}
+          onClose={() => setPromoDeliverPick(null)}
+          onConfirm={confirmPromoDelivered}
+        />
+      ) : null}
       {promoDraft ? (
         <NewPromoSheet
           draft={promoDraft}
@@ -2354,6 +2599,145 @@ function GastosScreen({
   )
 }
 
+function PromoEditSheet({
+  onClose,
+  onSave,
+  row,
+}: {
+  onClose: () => void
+  onSave: (draft: PromoEditDraft) => string | null
+  row: PromoRowStored
+}) {
+  const [draft, setDraft] = useState<PromoEditDraft>(() => ({
+    nombre: row.nombre,
+    unidades: String(row.unidades),
+    entregado: row.entregado ? 'SI' : 'NO',
+    entregadoPor: row.entregadoPor ?? 'Delfi',
+  }))
+  const [error, setError] = useState<string | null>(null)
+
+  function handleSave() {
+    const message = onSave(draft)
+    if (message) {
+      setError(message)
+
+      return
+    }
+
+    setError(null)
+    onClose()
+  }
+
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
+        <div className="grabber" />
+        <div className="sheet-head">
+          <div>
+            <h2>Editar promocional</h2>
+          </div>
+          <button className="close-button" onClick={onClose} type="button">
+            ×
+          </button>
+        </div>
+
+        <div className="new-sale-form">
+          <div className="edit-grid">
+            <span className="muted-label promo-draft-deliver-label">Entregado a:</span>
+            <input
+              className="wide"
+              placeholder="Nombre"
+              value={draft.nombre}
+              onChange={(event) => setDraft({ ...draft, nombre: event.target.value })}
+            />
+            <span className="muted-label promo-draft-deliver-label">Cantidad de ejemplares:</span>
+            <input
+              className="wide"
+              inputMode="numeric"
+              placeholder="Unidades"
+              value={draft.unidades}
+              onChange={(event) => setDraft({ ...draft, unidades: event.target.value })}
+            />
+            <span className="muted-label promo-draft-deliver-label">¿Quién lo entregó?</span>
+            <div className="promo-draft-deliver-segmented">
+              <Segmented
+                active={draft.entregadoPor}
+                onChange={(entregadoPor) => setDraft({ ...draft, entregadoPor })}
+                options={PROMO_DELIVER_OPTIONS}
+              />
+            </div>
+            <span className="muted-label promo-draft-deliver-label">¿Entregado?</span>
+            <div className="promo-draft-deliver-segmented">
+              <Segmented
+                active={draft.entregado}
+                onChange={(entregado) =>
+                  setDraft({
+                    ...draft,
+                    entregado,
+                    entregadoPor: entregado === 'SI' ? draft.entregadoPor || 'Delfi' : draft.entregadoPor,
+                  })
+                }
+                options={PROMO_ENTREGADO_SI_NO_OPTIONS}
+              />
+            </div>
+          </div>
+          {error ? <p className="edit-error">{error}</p> : null}
+          <div className="edit-actions">
+            <button className="secondary-button" onClick={onClose} type="button">
+              Cancelar
+            </button>
+            <button className="primary-button red" onClick={handleSave} type="button">
+              Guardar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PromoDeliverWhoSheet({
+  nombre,
+  onClose,
+  onConfirm,
+}: {
+  nombre: string
+  onClose: () => void
+  onConfirm: (by: PromoDeliveredBy) => void
+}) {
+  const [socia, setSocia] = useState<PromoDeliveredBy>('Delfi')
+
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
+        <div className="grabber" />
+        <div className="sheet-head">
+          <div>
+            <h2>¿Quién entregó?</h2>
+            <p>{nombre}</p>
+          </div>
+          <button className="close-button" onClick={onClose} type="button">
+            ×
+          </button>
+        </div>
+
+        <div className="new-sale-form promo-deliver-sheet-body">
+          <span className="muted-label">Socia</span>
+          <Segmented active={socia} onChange={setSocia} options={PROMO_DELIVER_OPTIONS} />
+          <div className="edit-actions">
+            <button className="secondary-button" onClick={onClose} type="button">
+              Cancelar
+            </button>
+            <button className="primary-button red" onClick={() => onConfirm(socia)} type="button">
+              Confirmar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function NewPromoSheet({
   draft,
   error,
@@ -2373,28 +2757,72 @@ function NewPromoSheet({
         <div className="grabber" />
         <div className="sheet-head">
           <div>
-            <h2>Nueva promo</h2>
-            <p>Cargá un nuevo ejemplar promocional.</p>
+            <h2>Nuevo promocional</h2>
           </div>
-          <button className="close-button" onClick={onClose} type="button">×</button>
+          <button className="close-button" onClick={onClose} type="button">
+            ×
+          </button>
         </div>
 
         <div className="new-sale-form">
           <div className="edit-grid">
-            <input placeholder="Nombre" value={draft.nombre} onChange={(event) => setDraft({ ...draft, nombre: event.target.value })} />
-            <input inputMode="numeric" placeholder="Unidades" value={draft.unidades} onChange={(event) => setDraft({ ...draft, unidades: event.target.value })} />
-            <select value={draft.group} onChange={(event) => setDraft({ ...draft, group: event.target.value as PromoGroup })}>
+            <span className="muted-label promo-draft-deliver-label">Entregado a:</span>
+            <input
+              className="wide"
+              placeholder="Nombre"
+              value={draft.nombre}
+              onChange={(event) => setDraft({ ...draft, nombre: event.target.value })}
+            />
+            <span className="muted-label promo-draft-deliver-label">Cantidad de ejemplares:</span>
+            <input
+              className="wide"
+              inputMode="numeric"
+              placeholder="Unidades"
+              value={draft.unidades}
+              onChange={(event) => setDraft({ ...draft, unidades: event.target.value })}
+            />
+            <span className="muted-label promo-draft-deliver-label">¿Quién lo entregó?</span>
+            <div className="promo-draft-deliver-segmented">
+              <Segmented
+                active={draft.entregadoPor}
+                onChange={(entregadoPor) => setDraft({ ...draft, entregadoPor })}
+                options={PROMO_DELIVER_OPTIONS}
+              />
+            </div>
+            <span className="muted-label promo-draft-deliver-label">¿Entregado?</span>
+            <div className="promo-draft-deliver-segmented">
+              <Segmented
+                active={draft.entregado}
+                onChange={(entregado) =>
+                  setDraft({
+                    ...draft,
+                    entregado,
+                    entregadoPor: entregado === 'SI' ? draft.entregadoPor || 'Delfi' : draft.entregadoPor,
+                  })
+                }
+                options={PROMO_ENTREGADO_SI_NO_OPTIONS}
+              />
+            </div>
+            <span className="muted-label promo-draft-deliver-label">Lista</span>
+            <select
+              className="wide"
+              value={draft.group}
+              onChange={(event) => setDraft({ ...draft, group: event.target.value as PromoGroup })}
+            >
               <option value="equipo">Equipo</option>
               <option value="colaboracion">Colaboración</option>
               <option value="colegio">Colegio</option>
               <option value="influencers">Influencers</option>
             </select>
-            <DeliveredSelect value={draft.entregado} onChange={(entregado) => setDraft({ ...draft, entregado })} />
           </div>
           {error ? <p className="edit-error">{error}</p> : null}
           <div className="edit-actions">
-            <button className="secondary-button" onClick={onClose} type="button">Cancelar</button>
-            <button className="primary-button red" onClick={onSave} type="button">Crear promo</button>
+            <button className="secondary-button" onClick={onClose} type="button">
+              Cancelar
+            </button>
+            <button className="primary-button red" onClick={onSave} type="button">
+              Guardar
+            </button>
           </div>
         </div>
       </div>
@@ -2486,14 +2914,16 @@ function NewExpenseSheet({
 function PromoSection({
   filter,
   group,
-  onToggleDelivered,
+  onEditRow,
+  onPromoCheckTap,
   rows,
   title,
 }: {
   filter: 'todos' | 'pendientes' | 'entregados'
   group: keyof typeof promoData
-  onToggleDelivered: (group: keyof typeof promoData, nombre: string) => void
-  rows: Array<{ nombre: string; unidades: number; entregado: boolean }>
+  onEditRow: (group: keyof typeof promoData, nombre: string) => void
+  onPromoCheckTap: (group: keyof typeof promoData, nombre: string) => void
+  rows: PromoRowStored[]
   title: string
 }) {
   const visibleRows = rows.filter((row) => {
@@ -2518,18 +2948,28 @@ function PromoSection({
       </div>
       <div className="list-group">
         {visibleRows.map((row, index) => (
-          <div className={`promo-row ${index === visibleRows.length - 1 ? 'last' : ''}`} key={row.nombre}>
+          <div
+            className={`promo-row promo-row--editable ${index === visibleRows.length - 1 ? 'last' : ''}`}
+            key={row.nombre}
+            onClick={() => onEditRow(group, row.nombre)}
+          >
             <Avatar name={row.nombre} size={34} />
             <strong>{row.nombre}</strong>
-            <span>{row.unidades > 0 ? `${row.unidades} u.` : '—'}</span>
-            <button
-              aria-label={`${row.entregado ? 'Marcar como no entregado' : 'Marcar como entregado'}: ${row.nombre}`}
-              className={row.entregado ? 'check-circle done' : 'check-circle'}
-              onClick={() => onToggleDelivered(group, row.nombre)}
-              type="button"
-            >
-              {row.entregado ? '✓' : ''}
-            </button>
+            <div className="promo-row-tail">
+              {row.entregado && row.entregadoPor ? <PayerChip name={row.entregadoPor} /> : null}
+              <span className="promo-row-units">{row.unidades > 0 ? `${row.unidades} u.` : '—'}</span>
+              <button
+                aria-label={`${row.entregado ? 'Marcar como no entregado' : 'Marcar como entregado'}: ${row.nombre}`}
+                className={row.entregado ? 'check-circle done' : 'check-circle'}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onPromoCheckTap(group, row.nombre)
+                }}
+                type="button"
+              >
+                {row.entregado ? '✓' : ''}
+              </button>
+            </div>
           </div>
         ))}
       </div>
@@ -2625,22 +3065,6 @@ function SellerSelect({
           {name}
         </option>
       ))}
-    </select>
-  )
-}
-
-function DeliveredSelect({
-  onChange,
-  value,
-}: {
-  onChange: (delivered: string) => void
-  value: string
-}) {
-  return (
-    <select aria-label="Entregado?" value={value} onChange={(event) => onChange(event.target.value)}>
-      <option value="">Entregado?</option>
-      <option value="SI">SI</option>
-      <option value="NO">NO</option>
     </select>
   )
 }
@@ -3018,7 +3442,8 @@ function createEmptyPromoDraft(): PromoDraft {
     nombre: '',
     unidades: '',
     group: 'colaboracion',
-    entregado: '',
+    entregado: 'NO',
+    entregadoPor: 'Delfi',
   }
 }
 

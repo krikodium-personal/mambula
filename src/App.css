@@ -377,6 +377,92 @@
   background: var(--orange);
 }
 
+.inventory-stock-bar {
+  display: flex;
+  flex-direction: row;
+}
+
+.inventory-stock-bar.empty {
+  background: var(--gray-fill);
+}
+
+.inventory-stock-segment {
+  height: 100%;
+  min-width: 0;
+}
+
+.inventory-stock-segment.promo {
+  background: var(--inventory-promo);
+}
+
+.inventory-stock-segment.sold {
+  background: var(--green);
+}
+
+.inventory-stock-segment.remainder {
+  background: var(--inventory-remainder);
+}
+
+.inventory-stock-counts {
+  display: grid;
+  gap: 4px 8px;
+  margin-top: 7px;
+}
+
+.inventory-stock-counts--socia {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.inventory-stock-counts--ac {
+  grid-template-columns: 1fr 1fr;
+}
+
+.inventory-stock-count-cell {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  justify-content: center;
+  min-width: 0;
+  row-gap: 2px;
+}
+
+.inventory-stock-count-dot {
+  border-radius: 999px;
+  flex-shrink: 0;
+  height: 6px;
+  width: 6px;
+}
+
+.inventory-stock-count-dot.promo {
+  background: var(--inventory-promo);
+}
+
+.inventory-stock-count-dot.sold {
+  background: var(--green);
+}
+
+.inventory-stock-count-dot.remainder {
+  background: var(--inventory-remainder);
+}
+
+.inventory-stock-count-label {
+  color: var(--label-3);
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.inventory-stock-count-value {
+  color: var(--label-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
 .rule-row {
   align-items: center;
   background: var(--surface-2);
@@ -779,6 +865,14 @@
   grid-column: 1 / -1;
 }
 
+.edit-grid .promo-draft-deliver-label {
+  grid-column: 1 / -1;
+}
+
+.edit-grid .promo-draft-deliver-segmented {
+  grid-column: 1 / -1;
+}
+
 .edit-actions {
   display: flex;
   gap: 8px;
@@ -1153,6 +1247,26 @@
   padding: 10px 16px;
 }
 
+.promo-row--editable {
+  cursor: pointer;
+}
+
+.promo-row--editable:active {
+  opacity: 0.92;
+}
+
+.promo-row-tail {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.promo-row-units {
+  color: var(--label-3);
+  font-size: 13px;
+}
+
 .promo-row strong {
   flex: 1;
   font-size: 15px;
@@ -1160,9 +1274,8 @@
   min-width: 0;
 }
 
-.promo-row span:not(.avatar) {
-  color: var(--label-3);
-  font-size: 13px;
+.promo-deliver-sheet-body .segmented {
+  width: 100%;
 }
 
 .check-circle {
