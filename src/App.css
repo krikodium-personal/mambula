@@ -2175,7 +2175,13 @@ button.stat-card.stat-card--clickable {
 }
 
 .liquidaciones-ventas-explain-detail {
-  margin-top: 10px;
+  margin-top: 6px;
+}
+
+.liquidaciones-ventas-explain-toggle-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
 }
 
 .liquidaciones-ventas-hero-wrap {

@@ -1738,7 +1738,7 @@ function HomeScreen({
           explainDetail={
             <>
               El total principal coincide con la pestaña Ventas (cobrado + pendiente por venta, sin encargos). Wonky
-              retiene               {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY)} por cada ejemplar de esas ventas (
+              retiene {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY)} por cada ejemplar de esas ventas (
               {numberFormatter.format(ventasLiquidacionesEjemplares)} u. →{' '}
               {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY * ventasLiquidacionesEjemplares)}). Cada socia (Delfi, Mechi,
               Susan) suma{' '}
@@ -1862,6 +1862,12 @@ function VentasScreen({
   const [query, setQuery] = useState('')
   const [sellerFilter, setSellerFilter] = useState<string | null>(null)
 
+  useEffect(() => {
+    if (paidViaFilter !== 'otro') return
+    setPaidViaFilter(null)
+    setVentasFilterAxis('estado')
+  }, [paidViaFilter])
+
   const sellerScopedSales = useMemo(() => {
     return sellerFilter ? sales.filter((sale) => sale.seller === sellerFilter) : sales
   }, [sales, sellerFilter])
@@ -1899,9 +1905,6 @@ function VentasScreen({
   const paidEfectivoCount = sellerScopedSales.filter(
     (sale) => sale.paymentStatus === 'cobrado' && sale.paymentMethod === 'efectivo',
   ).length
-  const paidOtroCount = sellerScopedSales.filter(
-    (sale) => sale.paymentStatus === 'cobrado' && sale.paymentMethod === 'otro',
-  ).length
 
   const pagadosCount = sellerScopedSales.filter((sale) => getSaleStatus(sale) === 'pagado').length
 
@@ -1914,14 +1917,12 @@ function VentasScreen({
       porFacturar: invoicePendingCount,
       paidTransferencia: paidTransferenciaCount,
       paidEfectivo: paidEfectivoCount,
-      paidOtro: paidOtroCount,
     }),
     [
       deliveryCount,
       invoicePendingCount,
       pagadosCount,
       paidEfectivoCount,
-      paidOtroCount,
       paidTransferenciaCount,
       pendingCount,
       sellerScopedSales.length,
@@ -2100,7 +2101,6 @@ function VentasFilterSheet({
     porFacturar: number
     paidTransferencia: number
     paidEfectivo: number
-    paidOtro: number
   }
   filter: VentasStatusFilter
   filterAxis: VentasFilterAxis
@@ -2117,11 +2117,10 @@ function VentasFilterSheet({
     { key: 'porFacturar', label: 'Por facturar', count: counts.porFacturar },
   ]
 
-  const paidKeyCount: Record<NonNullable<Sale['paymentMethod']>, number> = {
-    transferencia: counts.paidTransferencia,
-    efectivo: counts.paidEfectivo,
-    otro: counts.paidOtro,
-  }
+  const paidMedioOptions = [
+    { key: 'transferencia' as const, label: VENTAS_PAYMENT_METHOD_LABELS.transferencia, count: counts.paidTransferencia },
+    { key: 'efectivo' as const, label: VENTAS_PAYMENT_METHOD_LABELS.efectivo, count: counts.paidEfectivo },
+  ]
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
@@ -2168,7 +2167,7 @@ function VentasFilterSheet({
         <section className="sheet-list-section">
           <h3 id="ventas-filter-medio-heading">Medio de pago</h3>
           <div className="sheet-list" role="radiogroup" aria-labelledby="ventas-filter-medio-heading">
-            {(['transferencia', 'efectivo', 'otro'] as const).map((key) => {
+            {paidMedioOptions.map(({ key, label, count }) => {
               const selected = filterAxis === 'medio' && paidViaFilter === key
 
               return (
@@ -2184,9 +2183,9 @@ function VentasFilterSheet({
                     <span className="filter-sheet-radio" aria-hidden="true">
                       <span className="filter-sheet-radio-dot" />
                     </span>
-                    <span className="filter-sheet-row-label">{VENTAS_PAYMENT_METHOD_LABELS[key]}</span>
+                    <span className="filter-sheet-row-label">{label}</span>
                   </span>
-                  <span className="filter-sheet-row-count">{paidKeyCount[key]}</span>
+                  <span className="filter-sheet-row-count">{count}</span>
                 </button>
               )
             })}

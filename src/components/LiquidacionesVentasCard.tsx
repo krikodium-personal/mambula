@@ -62,23 +62,36 @@ export default function LiquidacionesVentasCard({
           <div className="liquidaciones-ventas-eyebrow">LIQUIDACION</div>
         </div>
         <div className="liquidaciones-ventas-title">Ventas Mambula</div>
-        <div className="liquidaciones-ventas-subtitle-row">
-          <span className="liquidaciones-ventas-subtitle-text">
-            Total como en Ventas (cobrado + pendiente, sin encargos). Cada socia: (total − Wonky) / 3, con Wonky ={' '}
-            {formatArs(wonkyPorLibroArs)} por ejemplar vendido en esas ventas.
-          </span>
-          <button
-            aria-expanded={explainExpanded}
-            className="liquidaciones-ventas-ver-todo"
-            onClick={onToggleExplain}
-            type="button"
-          >
-            {explainExpanded ? 'Ver menos' : 'Ver todo'}
-          </button>
-        </div>
         {explainExpanded ? (
-          <div className="liquidaciones-ventas-explain-detail card-note">{explainDetail}</div>
-        ) : null}
+          <>
+            <div className="liquidaciones-ventas-explain-detail card-note">{explainDetail}</div>
+            <div className="liquidaciones-ventas-explain-toggle-row">
+              <button
+                aria-expanded
+                className="liquidaciones-ventas-ver-todo"
+                onClick={onToggleExplain}
+                type="button"
+              >
+                Ver menos
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="liquidaciones-ventas-subtitle-row">
+            <span className="liquidaciones-ventas-subtitle-text">
+              Total como en Ventas (cobrado + pendiente, sin encargos). Cada socia: (total − Wonky) / 3, con Wonky ={' '}
+              {formatArs(wonkyPorLibroArs)} por ejemplar vendido en esas ventas.
+            </span>
+            <button
+              aria-expanded={false}
+              className="liquidaciones-ventas-ver-todo"
+              onClick={onToggleExplain}
+              type="button"
+            >
+              Ver todo
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="liquidaciones-ventas-hero-wrap">
