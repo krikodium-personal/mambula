@@ -11,7 +11,6 @@ import {
   type AbrInventorySplit,
   type AbrazandoGananciasPreview,
 } from './data/partnerSplits'
-import { calculateSaleBreakdown } from './data/ventas'
 import LiquidacionesVentasCard from './components/LiquidacionesVentasCard'
 import ProfitCard from './components/ProfitCard'
 import {
@@ -377,20 +376,24 @@ function App() {
   }, [])
 
   const { projectConfig, sales, stockAllocations } = ventasData
-  const saleBreakdowns = sales.map((sale) => calculateSaleBreakdown(sale, projectConfig))
   const soldCopies = sales.reduce((total, sale) => total + (sale.quantity ?? 0), 0)
-  const grossSalesArs = saleBreakdowns.reduce((total, item) => total + item.grossArs, 0)
 
   /** Suma `paid_ars`: todas las ventas cargadas (tras paginar la tabla `sales` en Supabase). */
   const salesPaidArsTotal = useMemo(() => sales.reduce((sum, sale) => sum + sale.paidArs, 0), [sales])
 
   const ventasTabSales = useMemo(() => sales.filter((sale) => !isEncargoSale(sale)), [sales])
+  const ventasTabSoldCopies = useMemo(
+    () => ventasTabSales.reduce((total, sale) => total + (sale.quantity ?? 0), 0),
+    [ventasTabSales],
+  )
   const encargoSales = useMemo(() => sales.filter(isEncargoSale), [sales])
   const ventasTabPaidArs = ventasTabSales.reduce((total, sale) => total + sale.paidArs, 0)
   const ventasTabPendingArs = useMemo(
     () => ventasTabSales.reduce((sum, sale) => sum + Math.max(0, getSalePending(sale)), 0),
     [ventasTabSales],
   )
+  /** Igual que «Total vendido» en la pestaña Ventas (no incluye encargos). */
+  const ventasHeroTotalVendidoArs = ventasTabPaidArs + ventasTabPendingArs
 
   const abrSplit = useMemo(
     () => computeAbrInventorySplit(stockAllocations, projectConfig.costRules),
@@ -461,8 +464,8 @@ function App() {
   )
 
   const partnerGainRows = useMemo(
-    () => computeVentasMambulaSplits(grossSalesArs, soldCopies),
-    [grossSalesArs, soldCopies],
+    () => computeVentasMambulaSplits(ventasHeroTotalVendidoArs, ventasTabSoldCopies),
+    [ventasHeroTotalVendidoArs, ventasTabSoldCopies],
   )
 
   async function savePartnerSettlement(input: {
@@ -767,7 +770,8 @@ function App() {
           copyStatus={copyStatus}
           mechiCopyStatus={mechiCopyStatus}
           expenses={expenses}
-          grossSalesArs={grossSalesArs}
+          ventasHeroTotalVendidoArs={ventasHeroTotalVendidoArs}
+          ventasLiquidacionesEjemplares={ventasTabSoldCopies}
           salesPaidArsTotal={salesPaidArsTotal}
           loadError={loadError}
           loading={loading}
@@ -1047,7 +1051,8 @@ function HomeScreen({
   copyPaymentAlias,
   copyStatus,
   expenses,
-  grossSalesArs,
+  ventasHeroTotalVendidoArs,
+  ventasLiquidacionesEjemplares,
   loadError,
   loading,
   mechiCopyStatus,
@@ -1073,7 +1078,9 @@ function HomeScreen({
   copyPaymentAlias: () => void
   copyStatus: 'idle' | 'copied' | 'error'
   expenses: Expense[]
-  grossSalesArs: number
+  ventasHeroTotalVendidoArs: number
+  /** Ejemplares en ventas principales (sin encargos); base para Wonky en liquidación Ventas Mambula. */
+  ventasLiquidacionesEjemplares: number
   loadError: string | null
   loading: boolean
   mechiCopyStatus: 'idle' | 'copied' | 'error'
@@ -1468,11 +1475,17 @@ function HomeScreen({
         <LiquidacionesVentasCard
           explainDetail={
             <>
-              Bruto por venta = ejemplares × precio unitario. Wonky suma{' '}
-              {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY)} por cada ejemplar vendido en total (
-              {numberFormatter.format(soldCopies)} u.). Del bruto total se descuenta ese monto y lo restante se divide
-              en tres entre las socias. <strong>Abrazandocuentos</strong> no participa de esta tabla (queda en el bloque
-              ABRAZANDOCUENTOS).
+              El total principal coincide con la pestaña Ventas (cobrado + pendiente por venta, sin encargos). Wonky
+              retiene               {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY)} por cada ejemplar de esas ventas (
+              {numberFormatter.format(ventasLiquidacionesEjemplares)} u. →{' '}
+              {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY * ventasLiquidacionesEjemplares)}). Cada socia (Delfi, Mechi,
+              Susan) suma{' '}
+              <strong>
+                (total Ventas − parte Wonky) / 3 = (
+                {currencyArsFormatter.format(ventasHeroTotalVendidoArs)} −{' '}
+                {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY * ventasLiquidacionesEjemplares)}) / 3
+              </strong>
+              . <strong>Abrazandocuentos</strong> no participa de esta tabla (queda en ABRAZANDOCUENTOS).
             </>
           }
           explainExpanded={ventasMambulaNoteOpen}
@@ -1485,8 +1498,8 @@ function HomeScreen({
           }}
           onToggleExplain={() => setVentasMambulaNoteOpen((open) => !open)}
           participantes={liquidacionesParticipantes}
-          totalBruto={grossSalesArs}
-          totalEjemplares={soldCopies}
+          totalBruto={ventasHeroTotalVendidoArs}
+          totalEjemplares={ventasLiquidacionesEjemplares}
           wonkyPorLibroArs={WONKY_ARS_PER_VENTA_COPY}
         />
 

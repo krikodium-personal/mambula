@@ -53,7 +53,6 @@ export default function LiquidacionesVentasCard({
 }: LiquidacionesVentasCardProps) {
   const totalGanancia = participantes.reduce((s, p) => s + p.ganancia, 0)
   const totalSaldado = participantes.reduce((s, p) => s + p.saldado, 0)
-  const totalPendiente = participantes.reduce((s, p) => s + p.pendiente, 0)
   const pctSaldado = totalGanancia > 0 ? (totalSaldado / totalGanancia) * 100 : 0
 
   return (
@@ -65,7 +64,8 @@ export default function LiquidacionesVentasCard({
         <div className="liquidaciones-ventas-title">Ventas Mambula</div>
         <div className="liquidaciones-ventas-subtitle-row">
           <span className="liquidaciones-ventas-subtitle-text">
-            Bruto por venta = ejemplares × precio unitario. Wonky suma {formatArs(wonkyPorLibroArs)} por libro.
+            Total como en Ventas (cobrado + pendiente, sin encargos). Cada socia: (total − Wonky) / 3, con Wonky ={' '}
+            {formatArs(wonkyPorLibroArs)} por ejemplar vendido en esas ventas.
           </span>
           <button
             aria-expanded={explainExpanded}
@@ -110,9 +110,9 @@ export default function LiquidacionesVentasCard({
               <div className="liquidaciones-ventas-progress-legend-right">
                 <div className="liquidaciones-ventas-legend-row liquidaciones-ventas-legend-row-end">
                   <span className="liquidaciones-ventas-dot liquidaciones-ventas-dot--muted" />
-                  <span className="liquidaciones-ventas-legend-label">Pendiente</span>
+                  <span className="liquidaciones-ventas-legend-label">Total vendido</span>
                 </div>
-                <div className="liquidaciones-ventas-legend-value">{formatArs(totalPendiente)}</div>
+                <div className="liquidaciones-ventas-legend-value">{formatArs(totalBruto)}</div>
               </div>
             </div>
           </div>

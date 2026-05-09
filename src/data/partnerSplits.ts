@@ -103,12 +103,15 @@ export function computeAbrInventorySplit(
   }
 }
 
+/** Reparto Ventas Mambula: socias en partes iguales tras descontar Wonky fijo por ejemplar. */
 export function computeVentasMambulaSplits(
-  grossSalesArs: number,
-  totalSoldQty: number,
+  /** Total vendido ARS (p. ej. cobrado + pendiente en Ventas, sin encargos). */
+  totalVentasArs: number,
+  /** Ejemplares que cuentan para ese total (mismo alcance que las ventas principales). */
+  ventasSoldQty: number,
 ): PartnerGainBreakdown[] {
-  const wonkyVentasArs = WONKY_ARS_PER_VENTA_COPY * totalSoldQty
-  const sociasVentasPoolArs = Math.max(0, grossSalesArs - wonkyVentasArs)
+  const wonkyVentasArs = WONKY_ARS_PER_VENTA_COPY * ventasSoldQty
+  const sociasVentasPoolArs = Math.max(0, totalVentasArs - wonkyVentasArs)
   const sociasVentasEachArs = sociasVentasPoolArs / 3
 
   const sociaRows: PartnerGainBreakdown[] = SOCIAS.map((partner) => ({
