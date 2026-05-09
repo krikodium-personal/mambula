@@ -73,6 +73,17 @@
   padding: 14px 16px;
 }
 
+.alias-owner-label {
+  display: block;
+  font-weight: 600;
+  margin-top: 10px;
+}
+
+.alias-card-split {
+  border-top: 1px solid rgba(60, 60, 67, 0.12);
+  margin: 14px 0 4px;
+}
+
 .muted-label,
 .card-note {
   color: var(--label-3);
@@ -84,7 +95,7 @@
   align-items: center;
   display: flex;
   gap: 10px;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .alias-row strong {

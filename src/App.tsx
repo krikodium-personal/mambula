@@ -39,6 +39,9 @@ import {
 } from './lib/ventasRepository'
 import type { PartnerGainBreakdown, PartnerSettlement, Sale, SplitPartnerKey, StockAllocation } from './types'
 
+/** Alias Mercado Pago para cobros a nombre de Mechi (distinto del alias principal en proyecto). */
+const MECHI_MP_PAYMENT_ALIAS = 'mambula.cancion'
+
 type AppTab = 'home' | 'ventas' | 'encargos' | 'promo' | 'gastos'
 type SaleDraft = {
   buyer: string
@@ -249,6 +252,7 @@ function App() {
   const [loading, setLoading] = useState(isSupabaseConfigured)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
+  const [mechiCopyStatus, setMechiCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null)
   const [saleDetailEncargoSummary, setSaleDetailEncargoSummary] = useState(false)
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null)
@@ -482,6 +486,18 @@ function App() {
     } catch {
       setCopyStatus('error')
       window.setTimeout(() => setCopyStatus('idle'), 1400)
+    }
+  }
+
+  async function copyMechiPaymentAlias() {
+    setMechiCopyStatus('copied')
+    window.setTimeout(() => setMechiCopyStatus('idle'), 1400)
+
+    try {
+      await copyTextToClipboard(MECHI_MP_PAYMENT_ALIAS)
+    } catch {
+      setMechiCopyStatus('error')
+      window.setTimeout(() => setMechiCopyStatus('idle'), 1400)
     }
   }
 
@@ -728,8 +744,10 @@ function App() {
           acSchemeSoldQty={acSchemeSoldQty}
           acSliderPersistStatus={acSliderPersistStatus}
           acSliderGains={acSliderGains}
+          copyMechiPaymentAlias={copyMechiPaymentAlias}
           copyPaymentAlias={copyPaymentAlias}
           copyStatus={copyStatus}
+          mechiCopyStatus={mechiCopyStatus}
           expenses={expenses}
           grossSalesArs={grossSalesArs}
           loadError={loadError}
@@ -1007,12 +1025,14 @@ function HomeScreen({
   acSchemeSoldQty,
   acSliderPersistStatus,
   acSliderGains,
+  copyMechiPaymentAlias,
   copyPaymentAlias,
   copyStatus,
   expenses,
   grossSalesArs,
   loadError,
   loading,
+  mechiCopyStatus,
   onAcSchemeSoldQtyChange,
   partnerGainRows,
   partnerSettlements,
@@ -1030,12 +1050,14 @@ function HomeScreen({
   acSchemeSoldQty: number
   acSliderPersistStatus: 'idle' | 'saving' | 'saved' | 'error'
   acSliderGains: AbrazandoGananciasPreview
+  copyMechiPaymentAlias: () => void
   copyPaymentAlias: () => void
   copyStatus: 'idle' | 'copied' | 'error'
   expenses: Expense[]
   grossSalesArs: number
   loadError: string | null
   loading: boolean
+  mechiCopyStatus: 'idle' | 'copied' | 'error'
   onAcSchemeSoldQtyChange: (units: number) => void
   partnerGainRows: PartnerGainBreakdown[]
   partnerSettlements: PartnerSettlement[]
@@ -1163,13 +1185,35 @@ function HomeScreen({
       />
       <div className="screen-stack">
         <div className="ios-card alias-card">
-          <span className="muted-label">Mercado Pago</span>
+          <span className="liquidaciones-ventas-eyebrow">Mercado Pago</span>
+          <span className="muted-label alias-owner-label">Delfi:</span>
           <div className="alias-row">
             <strong>{projectConfig.payment.alias}</strong>
-            <button className="small-icon-button" onClick={copyPaymentAlias} type="button">
+            <button
+              aria-label="Copiar alias"
+              className="small-icon-button"
+              onClick={copyPaymentAlias}
+              type="button"
+            >
               {copyStatus === 'copied' ? '✓' : copyStatus === 'error' ? '!' : <CopyIcon />}
             </button>
           </div>
+
+          <div className="alias-card-split" />
+
+          <span className="muted-label alias-owner-label">Mechi:</span>
+          <div className="alias-row">
+            <strong>{MECHI_MP_PAYMENT_ALIAS}</strong>
+            <button
+              aria-label="Copiar alias de Mechi"
+              className="small-icon-button"
+              onClick={copyMechiPaymentAlias}
+              type="button"
+            >
+              {mechiCopyStatus === 'copied' ? '✓' : mechiCopyStatus === 'error' ? '!' : <CopyIcon />}
+            </button>
+          </div>
+
           <span className="muted-label">Alias para transferencias de ventas</span>
         </div>
 
