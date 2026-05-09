@@ -433,6 +433,203 @@ button.stat-card.stat-card--clickable {
   margin: 4px 0 10px;
 }
 
+.cuentas-card-sub {
+  color: var(--label-3);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0 0 14px;
+}
+
+.cuentas-subsection-label {
+  color: var(--label-3);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  margin: 18px 0 8px;
+  text-transform: uppercase;
+}
+
+.cuentas-subsection-label:first-of-type {
+  margin-top: 4px;
+}
+
+.cuentas-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cuentas-row {
+  align-items: baseline;
+  border-bottom: 0.5px solid var(--separator);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 8px 0;
+}
+
+.cuentas-row:last-child {
+  border-bottom: none;
+}
+
+.cuentas-row--tap {
+  padding: 0;
+}
+
+.cuentas-row-button {
+  align-items: baseline;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font-family: inherit;
+  font-size: inherit;
+  gap: 12px;
+  justify-content: space-between;
+  margin: 0;
+  padding: 8px 0;
+  text-align: left;
+  width: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cuentas-row-button span {
+  color: var(--label-2);
+  font-size: 14px;
+}
+
+.cuentas-row-button strong {
+  color: var(--label);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.cuentas-row-button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.cuentas-row-button:focus-visible {
+  border-radius: 8px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.cuentas-row span {
+  color: var(--label-2);
+  font-size: 14px;
+}
+
+.cuentas-row strong {
+  color: var(--label);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.cuentas-row--warn .cuentas-row-button span,
+.cuentas-row--warn .cuentas-row-button strong {
+  color: var(--orange);
+}
+
+.cuentas-detail-sheet-body {
+  padding: 4px 20px 20px;
+}
+
+.cuentas-detail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cuentas-detail-row-wrap {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cuentas-detail-row-button {
+  align-items: flex-start;
+  background: transparent;
+  border: none;
+  border-bottom: 0.5px solid var(--separator);
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px 0;
+  text-align: left;
+  width: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cuentas-detail-row-button:focus-visible {
+  border-radius: 8px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.cuentas-detail-row-wrap:last-child .cuentas-detail-row-button {
+  border-bottom: none;
+}
+
+.cuentas-detail-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cuentas-detail-row-main strong {
+  color: var(--label);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.cuentas-detail-meta {
+  color: var(--label-3);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.cuentas-detail-amount {
+  color: var(--label);
+  flex-shrink: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.cuentas-subtotal {
+  align-items: baseline;
+  border-top: 0.5px solid var(--separator);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding-top: 10px;
+}
+
+.cuentas-subtotal span {
+  color: var(--label-3);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cuentas-subtotal strong {
+  color: var(--label);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.cuentas-empty {
+  color: var(--label-3);
+  font-size: 13px;
+  margin: 0 0 4px;
+}
+
 .promo-heading h2 {
   color: var(--label);
   font-size: 17px;

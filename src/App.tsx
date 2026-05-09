@@ -139,6 +139,11 @@ const currencyUsdFormatter = new Intl.NumberFormat('es-AR', {
   currency: 'USD',
   maximumFractionDigits: 0,
 })
+const ventasShortDateFormatter = new Intl.DateTimeFormat('es-AR', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+})
 const sellerNames = ['Delfi', 'Mechi', 'Susan', 'Abrazandocuentos']
 const appBasePath = import.meta.env.BASE_URL
 const tabRoutes: Record<AppTab, string> = {
@@ -547,6 +552,18 @@ function App() {
     setSelectedSale(sale)
   }
 
+  function handleOpenSaleFromCuentas(sale: Sale) {
+    if (isEncargoSale(sale)) {
+      setSaleDetailEncargoSummary(true)
+      setSelectedSale(sale)
+      selectTab('encargos')
+    } else {
+      setSaleDetailEncargoSummary(false)
+      setSelectedSale(sale)
+      selectTab('ventas')
+    }
+  }
+
   async function saveEditingSale(saleId: string) {
     if (!saleDraft) return
 
@@ -788,6 +805,7 @@ function App() {
           loadError={loadError}
           loading={loading}
           onAcSchemeSoldQtyChange={setAcSchemeSoldQty}
+          onOpenSaleFromCuentas={handleOpenSaleFromCuentas}
           partnerGainRows={partnerGainRows}
           partnerSettlements={partnerSettlements}
           projectConfig={projectConfig}
@@ -1054,6 +1072,83 @@ function InventoryStockCounts({
   )
 }
 
+function CuentasMedioDetailSheet({
+  onClose,
+  onSelectSale,
+  sales,
+  title,
+}: {
+  onClose: () => void
+  onSelectSale: (sale: Sale) => void
+  sales: Sale[]
+  title: string
+}) {
+  const sorted = useMemo(
+    () => [...sales].sort((a, b) => String(b.date).localeCompare(String(a.date))),
+    [sales],
+  )
+  const totalArs = useMemo(() => sorted.reduce((sum, sale) => sum + sale.paidArs, 0), [sorted])
+  const countLabel = sorted.length === 1 ? '1 venta cobrada' : `${sorted.length} ventas cobradas`
+
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
+        <div className="grabber" />
+        <div className="sheet-head">
+          <div>
+            <h2>{title}</h2>
+            <p>
+              {countLabel} · Total {currencyArsFormatter.format(totalArs)}
+            </p>
+          </div>
+          <button aria-label="Cerrar" className="close-button" onClick={onClose} type="button">
+            ×
+          </button>
+        </div>
+
+        <div className="cuentas-detail-sheet-body">
+          {sorted.length === 0 ? (
+            <p className="cuentas-empty">No hay ventas en este concepto.</p>
+          ) : (
+            <ul className="cuentas-detail-list">
+              {sorted.map((sale) => (
+                <li className="cuentas-detail-row-wrap" key={sale.id}>
+                  <button
+                    aria-label={`Ver detalle: ${sale.buyer}`}
+                    className="cuentas-detail-row-button"
+                    onClick={() => onSelectSale(sale)}
+                    type="button"
+                  >
+                    <div className="cuentas-detail-row-main">
+                      <strong>{sale.buyer}</strong>
+                      <span className="cuentas-detail-meta">
+                        {ventasShortDateFormatter.format(new Date(sale.date))}
+                        {sale.quantity != null ? (
+                          <>
+                            {' '}
+                            · {sale.quantity} {sale.quantity === 1 ? 'unidad' : 'unidades'}
+                          </>
+                        ) : null}
+                        {sale.paymentMethod === 'transferencia' && sale.seller ? (
+                          <>
+                            {' '}
+                            · {sale.seller}
+                          </>
+                        ) : null}
+                      </span>
+                    </div>
+                    <strong className="cuentas-detail-amount">{currencyArsFormatter.format(sale.paidArs)}</strong>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function HomeScreen({
   abrSplit,
   acSchemeSoldQty,
@@ -1069,6 +1164,7 @@ function HomeScreen({
   loading,
   mechiCopyStatus,
   onAcSchemeSoldQtyChange,
+  onOpenSaleFromCuentas,
   partnerGainRows,
   partnerSettlements,
   salesPaidArsTotal,
@@ -1097,6 +1193,7 @@ function HomeScreen({
   loading: boolean
   mechiCopyStatus: 'idle' | 'copied' | 'error'
   onAcSchemeSoldQtyChange: (units: number) => void
+  onOpenSaleFromCuentas: (sale: Sale) => void
   partnerGainRows: PartnerGainBreakdown[]
   partnerSettlements: PartnerSettlement[]
   salesPaidArsTotal: number
@@ -1128,6 +1225,7 @@ function HomeScreen({
     return createStockAllocationDraft(allocationsForHomeInventoryTable(stockAllocations))
   })
   const [localStockError, setLocalStockError] = useState<string | null>(null)
+  const [cuentasMedioSheet, setCuentasMedioSheet] = useState<{ title: string; sales: Sale[] } | null>(null)
   const availableCopies = projectConfig.firstPrintRun.copies - soldCopies
   const copiesPerBox = projectConfig.firstPrintRun.copies / projectConfig.firstPrintRun.boxes
   const inventoryError = localStockError ?? stockAllocationError
@@ -1174,6 +1272,61 @@ function HomeScreen({
     expenses,
     partnerGainRows,
   ])
+
+  /** Cobrado efectivo por vendedor; transferencias por cuenta destino (solo ventas Cobrado). */
+  const cuentasPorMedio = useMemo(() => {
+    const efectivoBySeller = new Map<string, Sale[]>()
+    const transferenciaSales = {
+      Delfi: [] as Sale[],
+      Mechi: [] as Sale[],
+      sinDefinir: [] as Sale[],
+    }
+
+    for (const sale of sales) {
+      if (sale.paymentStatus !== 'cobrado') continue
+
+      if (sale.paymentMethod === 'efectivo') {
+        const seller = sale.seller?.trim() || 'Sin vendedor'
+        const arr = efectivoBySeller.get(seller) ?? []
+        arr.push(sale)
+        efectivoBySeller.set(seller, arr)
+      } else if (sale.paymentMethod === 'transferencia') {
+        if (sale.transferDestination === 'Delfi') transferenciaSales.Delfi.push(sale)
+        else if (sale.transferDestination === 'Mechi') transferenciaSales.Mechi.push(sale)
+        else transferenciaSales.sinDefinir.push(sale)
+      }
+    }
+
+    const sellerOrderIndex = (name: string) => {
+      const i = sellerNames.indexOf(name as (typeof sellerNames)[number])
+      return i === -1 ? 999 : i
+    }
+
+    const efectivoRows = [...efectivoBySeller.entries()]
+      .map(([seller, saleList]) => ({
+        seller,
+        amount: saleList.reduce((sum, s) => sum + s.paidArs, 0),
+        sales: saleList,
+      }))
+      .sort((a, b) => {
+        const da = sellerOrderIndex(a.seller)
+        const db = sellerOrderIndex(b.seller)
+        if (da !== db) return da - db
+
+        return a.seller.localeCompare(b.seller, 'es')
+      })
+
+    const transferencia = {
+      Delfi: transferenciaSales.Delfi.reduce((sum, s) => sum + s.paidArs, 0),
+      Mechi: transferenciaSales.Mechi.reduce((sum, s) => sum + s.paidArs, 0),
+      sinDefinir: transferenciaSales.sinDefinir.reduce((sum, s) => sum + s.paidArs, 0),
+    }
+
+    const efectivoTotal = efectivoRows.reduce((sum, row) => sum + row.amount, 0)
+    const transferenciaTotal = transferencia.Delfi + transferencia.Mechi + transferencia.sinDefinir
+
+    return { efectivoRows, transferencia, transferenciaSales, efectivoTotal, transferenciaTotal }
+  }, [sales])
 
   function startEditingInventory() {
     setStockDraft(createStockAllocationDraft(inventoryTableRows))
@@ -1270,6 +1423,103 @@ function HomeScreen({
           <StatCard label="Cajas" sub={`${numberFormatter.format(copiesPerBox)} libros por caja`} value={numberFormatter.format(projectConfig.firstPrintRun.boxes)} />
           <StatCard label="Vendidos" sub={`${numberFormatter.format(availableCopies)} disponibles`} value={numberFormatter.format(soldCopies)} />
           <StatCard label="Ingresos" sub="Suma pagados" value={currencyArsFormatter.format(salesPaidArsTotal)} />
+        </div>
+
+        <div className="ios-card cuentas-card">
+          <SectionTitle eyebrow="CUENTAS" title="Totales por medio de pago" />
+          <p className="cuentas-card-sub">
+            Importe <strong>pagado</strong> en ventas con estado Cobrado (efectivo por vendedora; transferencias por
+            cuenta destino).
+          </p>
+
+          <h4 className="cuentas-subsection-label">EFECTIVO</h4>
+          {cuentasPorMedio.efectivoRows.length === 0 ? (
+            <p className="cuentas-empty">Sin cobros en efectivo.</p>
+          ) : (
+            <>
+              <ul className="cuentas-rows">
+                {cuentasPorMedio.efectivoRows.map(({ seller, amount, sales: bucketSales }) => (
+                  <li className="cuentas-row cuentas-row--tap" key={seller}>
+                    <button
+                      className="cuentas-row-button"
+                      disabled={bucketSales.length === 0}
+                      onClick={() =>
+                        setCuentasMedioSheet({
+                          title: `Efectivo · ${seller}`,
+                          sales: bucketSales,
+                        })
+                      }
+                      type="button"
+                    >
+                      <span>{seller}</span>
+                      <strong>{currencyArsFormatter.format(amount)}</strong>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="cuentas-subtotal">
+                <span>Subtotal efectivo</span>
+                <strong>{currencyArsFormatter.format(cuentasPorMedio.efectivoTotal)}</strong>
+              </div>
+            </>
+          )}
+
+          <h4 className="cuentas-subsection-label">TRANSFERENCIA</h4>
+          <ul className="cuentas-rows">
+            <li className="cuentas-row cuentas-row--tap">
+              <button
+                className="cuentas-row-button"
+                disabled={cuentasPorMedio.transferenciaSales.Delfi.length === 0}
+                onClick={() =>
+                  setCuentasMedioSheet({
+                    title: 'Transferencia · Delfi',
+                    sales: cuentasPorMedio.transferenciaSales.Delfi,
+                  })
+                }
+                type="button"
+              >
+                <span>Delfi</span>
+                <strong>{currencyArsFormatter.format(cuentasPorMedio.transferencia.Delfi)}</strong>
+              </button>
+            </li>
+            <li className="cuentas-row cuentas-row--tap">
+              <button
+                className="cuentas-row-button"
+                disabled={cuentasPorMedio.transferenciaSales.Mechi.length === 0}
+                onClick={() =>
+                  setCuentasMedioSheet({
+                    title: 'Transferencia · Mechi',
+                    sales: cuentasPorMedio.transferenciaSales.Mechi,
+                  })
+                }
+                type="button"
+              >
+                <span>Mechi</span>
+                <strong>{currencyArsFormatter.format(cuentasPorMedio.transferencia.Mechi)}</strong>
+              </button>
+            </li>
+            {cuentasPorMedio.transferencia.sinDefinir > 0 ? (
+              <li className="cuentas-row cuentas-row--tap cuentas-row--warn">
+                <button
+                  className="cuentas-row-button cuentas-row-button--warn"
+                  onClick={() =>
+                    setCuentasMedioSheet({
+                      title: 'Transferencia · Sin cuenta destino',
+                      sales: cuentasPorMedio.transferenciaSales.sinDefinir,
+                    })
+                  }
+                  type="button"
+                >
+                  <span>Sin cuenta destino</span>
+                  <strong>{currencyArsFormatter.format(cuentasPorMedio.transferencia.sinDefinir)}</strong>
+                </button>
+              </li>
+            ) : null}
+          </ul>
+          <div className="cuentas-subtotal">
+            <span>Subtotal transferencias</span>
+            <strong>{currencyArsFormatter.format(cuentasPorMedio.transferenciaTotal)}</strong>
+          </div>
         </div>
 
         <div className="ios-card">
@@ -1539,6 +1789,18 @@ function HomeScreen({
               </ul>
             </div>
           </div>
+        ) : null}
+
+        {cuentasMedioSheet ? (
+          <CuentasMedioDetailSheet
+            onClose={() => setCuentasMedioSheet(null)}
+            onSelectSale={(sale) => {
+              setCuentasMedioSheet(null)
+              onOpenSaleFromCuentas(sale)
+            }}
+            sales={cuentasMedioSheet.sales}
+            title={cuentasMedioSheet.title}
+          />
         ) : null}
 
         {settleRow ? (
