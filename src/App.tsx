@@ -612,7 +612,7 @@ function App() {
 
       setVentasData((current) => ({
         ...current,
-        sales: [newSale, ...current.sales],
+        sales: [...current.sales, newSale],
       }))
       selectTab(isEncargoSale(newSale) ? 'encargos' : 'ventas')
       setCreateDraft(null)
@@ -1688,6 +1688,22 @@ function EncargosScreen({
   )
 }
 
+function encargoQtyCircleClass(quantity: number | null | undefined): string {
+  if (quantity === null || quantity === undefined || quantity <= 1) {
+    return ''
+  }
+  if (quantity === 2) {
+    return 'encargo-qty-2'
+  }
+  if (quantity === 3) {
+    return 'encargo-qty-3'
+  }
+  if (quantity === 4) {
+    return 'encargo-qty-4'
+  }
+  return 'encargo-qty-5plus'
+}
+
 function EncargoSellerPill({ seller }: { seller: string }) {
   const display = seller.trim() || 'Sin vendedor'
   const slug = display.toLowerCase().replace(/\s+/g, '-')
@@ -1730,7 +1746,11 @@ function EncargoRow({
         tabIndex={0}
       >
         <div className="encargo-row-leading">
-          <span aria-label={qtyAria} className="encargo-qty-circle" title={qtyAria}>
+          <span
+            aria-label={qtyAria}
+            className={`encargo-qty-circle ${encargoQtyCircleClass(sale.quantity)}`.trim()}
+            title={qtyAria}
+          >
             {qtyShort ?? '–'}
           </span>
           <div className="encargo-row-copy">

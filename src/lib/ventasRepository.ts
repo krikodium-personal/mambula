@@ -35,6 +35,8 @@ type SaleRow = {
   invoice_status: NonNullable<Sale['invoiceStatus']>
   delivered: string | null
   billing_notes: string | null
+  /** Orden de fila en Excel; null = alta manual (va al final). */
+  sheet_position: number | null
 }
 
 export type SaleUpdateInput = Pick<
@@ -264,9 +266,8 @@ export async function loadVentasData(): Promise<VentasData> {
     supabase
       .from('sales')
       .select('*')
-      .order('sold_at', { ascending: false })
-      .order('created_at', { ascending: false })
-      .order('buyer', { ascending: true }),
+      .order('sheet_position', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true }),
   ])
 
   if (settingsResponse.error) {
