@@ -1185,7 +1185,7 @@ function HomeScreen({
       />
       <div className="screen-stack">
         <div className="ios-card alias-card">
-          <span className="liquidaciones-ventas-eyebrow">Mercado Pago</span>
+          <span className="liquidaciones-ventas-eyebrow">MERCADOPAGO</span>
           <span className="muted-label alias-owner-label">Delfi:</span>
           <div className="alias-row">
             <strong>{projectConfig.payment.alias}</strong>
