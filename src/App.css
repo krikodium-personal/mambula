@@ -977,6 +977,16 @@ button.stat-card.stat-card--clickable {
   fill: none;
 }
 
+.sale-row-payment-icon--unset {
+  color: var(--label-4);
+}
+
+.sale-row-payment-icon--unset svg {
+  height: 20px;
+  opacity: 0.85;
+  width: 20px;
+}
+
 .invoice-icon {
   align-items: center;
   border-radius: 8px;
@@ -1135,6 +1145,78 @@ button.stat-card.stat-card--clickable {
   justify-content: flex-end;
 }
 
+.promo-edit-actions {
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.promo-edit-actions-trailing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.promo-edit-delete-button {
+  background: none;
+  border: 0;
+  color: var(--red);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 4px;
+}
+
+.promo-edit-delete-button:active {
+  opacity: 0.75;
+}
+
+.nested-confirm-backdrop {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.48);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 50;
+}
+
+.nested-confirm-dialog {
+  background: var(--bg);
+  border-radius: 16px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.22);
+  box-sizing: border-box;
+  max-width: 360px;
+  padding: 20px 20px 16px;
+  width: 100%;
+}
+
+.nested-confirm-title {
+  color: var(--label);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 10px;
+}
+
+.nested-confirm-body {
+  color: var(--label-2);
+  font-size: 14px;
+  line-height: 1.45;
+  margin: 0 0 20px;
+}
+
+.nested-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .primary-button,
 .secondary-button {
   border: 0;
@@ -1227,6 +1309,31 @@ button.stat-card.stat-card--clickable {
   letter-spacing: 0.06em;
   margin-bottom: 6px;
   text-transform: uppercase;
+}
+
+.new-sale-field-hint {
+  color: var(--label-3);
+  font-size: 12px;
+  line-height: 1.35;
+  margin-bottom: 8px;
+  margin-top: -4px;
+}
+
+.new-sale-clear-medio {
+  align-self: flex-start;
+  background: none;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  margin-top: 8px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.new-sale-clear-medio:active {
+  opacity: 0.72;
 }
 
 .new-sale-input {

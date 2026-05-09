@@ -33,7 +33,8 @@ export type Sale = {
   quantity: number | null
   unitPriceArs: number | null
   paidArs: number
-  paymentMethod: 'transferencia' | 'efectivo' | 'otro'
+  /** Null = sin medio definido (válido si `paymentStatus === 'pendiente'`). */
+  paymentMethod: 'transferencia' | 'efectivo' | 'otro' | null
   /** Solo si `paymentMethod === 'transferencia'`; ventas viejas pueden tener null. */
   transferDestination: SaleTransferDestination | null
   paymentStatus: 'pendiente' | 'cobrado'

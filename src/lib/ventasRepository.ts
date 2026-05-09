@@ -31,7 +31,7 @@ type SaleRow = {
   quantity: number | null
   unit_price_ars: number | null
   paid_ars: number
-  payment_method: Sale['paymentMethod']
+  payment_method?: string | null
   transfer_destination?: string | null
   payment_status: Sale['paymentStatus']
   invoice_status: NonNullable<Sale['invoiceStatus']>
@@ -376,6 +376,12 @@ function normalizeTransferDestination(raw: string | null | undefined): Sale['tra
   return null
 }
 
+function normalizePaymentMethod(raw: string | null | undefined): Sale['paymentMethod'] {
+  if (raw === 'transferencia' || raw === 'efectivo' || raw === 'otro') return raw
+
+  return null
+}
+
 function mapSale(row: SaleRow): Sale {
   return {
     id: row.id,
@@ -385,7 +391,7 @@ function mapSale(row: SaleRow): Sale {
     quantity: row.quantity,
     unitPriceArs: row.unit_price_ars === null ? null : Number(row.unit_price_ars),
     paidArs: Number(row.paid_ars),
-    paymentMethod: row.payment_method,
+    paymentMethod: normalizePaymentMethod(row.payment_method),
     transferDestination: normalizeTransferDestination(row.transfer_destination),
     paymentStatus: row.payment_status,
     invoiceStatus: normalizeInvoiceStatus(row.invoice_status),

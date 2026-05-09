@@ -561,6 +561,12 @@ function App() {
       return
     }
 
+    const cobradoMedioErr = cobradoPaymentMethodValidationError(saleDraft)
+    if (cobradoMedioErr) {
+      setEditError(cobradoMedioErr)
+      return
+    }
+
     const otroMedioErr = otroPaymentMethodValidationError(saleDraft)
     if (otroMedioErr) {
       setEditError(otroMedioErr)
@@ -631,6 +637,12 @@ function App() {
     const cobradoErr = cobradoPaidValidationError(createDraft)
     if (cobradoErr) {
       setEditError(cobradoErr)
+      return
+    }
+
+    const cobradoMedioErr = cobradoPaymentMethodValidationError(createDraft)
+    if (cobradoMedioErr) {
+      setEditError(cobradoMedioErr)
       return
     }
 
@@ -1554,10 +1566,16 @@ type VentasStatusFilter = 'todas' | 'pendiente' | 'pagados' | 'porEntregar' | 'p
 
 type VentasFilterAxis = 'estado' | 'medio'
 
-const VENTAS_PAYMENT_METHOD_LABELS: Record<Sale['paymentMethod'], string> = {
+const VENTAS_PAYMENT_METHOD_LABELS: Record<NonNullable<Sale['paymentMethod']>, string> = {
   transferencia: 'Transferencia',
   efectivo: 'Efectivo',
   otro: 'Otro',
+}
+
+function ventasPaymentMethodLabel(method: Sale['paymentMethod']): string {
+  if (method === null || method === undefined) return 'Sin definir'
+
+  return VENTAS_PAYMENT_METHOD_LABELS[method]
 }
 
 function VentasScreen({
@@ -1826,7 +1844,7 @@ function VentasFilterSheet({
   filterAxis: VentasFilterAxis
   onClose: () => void
   onSelectEstado: (value: VentasStatusFilter) => void
-  onSelectMedio: (value: Sale['paymentMethod']) => void
+  onSelectMedio: (value: NonNullable<Sale['paymentMethod']>) => void
   paidViaFilter: Sale['paymentMethod'] | null
 }) {
   const statusOptions: Array<{ key: VentasStatusFilter; label: string; count: number }> = [
@@ -1837,7 +1855,7 @@ function VentasFilterSheet({
     { key: 'porFacturar', label: 'Por facturar', count: counts.porFacturar },
   ]
 
-  const paidKeyCount: Record<Sale['paymentMethod'], number> = {
+  const paidKeyCount: Record<NonNullable<Sale['paymentMethod']>, number> = {
     transferencia: counts.paidTransferencia,
     efectivo: counts.paidEfectivo,
     otro: counts.paidOtro,
@@ -2300,7 +2318,7 @@ function SaleDetailSheet({
           <ListItem label="Unidades" value={sale.quantity?.toString() ?? '-'} />
           <ListItem label="Precio unitario" value={sale.unitPriceArs === null ? '-' : currencyArsFormatter.format(sale.unitPriceArs)} />
           <ListItem label="Subtotal" value={currencyArsFormatter.format(totalArs)} />
-          <ListItem label="Medio de pago" value={VENTAS_PAYMENT_METHOD_LABELS[sale.paymentMethod]} />
+          <ListItem label="Medio de pago" value={ventasPaymentMethodLabel(sale.paymentMethod)} />
           {sale.paymentMethod === 'transferencia' ? (
             <ListItem label="Cuenta destino" value={sale.transferDestination ?? 'Sin registrar'} />
           ) : null}
@@ -2562,6 +2580,11 @@ function SaleDraftSheet({
 
                 <div className="new-sale-field">
                   <span className="new-sale-field-label">Medio de pago</span>
+                  <span className="new-sale-field-hint">
+                    {draft.paymentStatus === 'pendiente'
+                      ? 'Opcional si la venta está por pagar.'
+                      : 'Obligatorio si está cobrado.'}
+                  </span>
                   <Segmented<'transferencia' | 'efectivo'>
                     active={paymentMethodSegmentActive}
                     onChange={(paymentMethod) => setDraft({ ...draft, paymentMethod })}
@@ -2570,6 +2593,15 @@ function SaleDraftSheet({
                       { key: 'efectivo', label: 'Efectivo' },
                     ]}
                   />
+                  {draft.paymentStatus === 'pendiente' ? (
+                    <button
+                      className="new-sale-clear-medio"
+                      onClick={() => setDraft({ ...draft, paymentMethod: null })}
+                      type="button"
+                    >
+                      Sin medio de pago
+                    </button>
+                  ) : null}
                 </div>
 
                 {draft.paymentMethod === 'transferencia' ? (
@@ -2592,7 +2624,12 @@ function SaleDraftSheet({
                   <span className="new-sale-field-label">Pago</span>
                   <Segmented<Sale['paymentStatus']>
                     active={draft.paymentStatus}
-                    onChange={(paymentStatus) => setDraft({ ...draft, paymentStatus })}
+                    onChange={(paymentStatus) =>
+                      setDraft({
+                        ...draft,
+                        paymentStatus,
+                      })
+                    }
                     options={[
                       { key: 'pendiente', label: 'Por pagar' },
                       { key: 'cobrado', label: 'Cobrado' },
@@ -2762,6 +2799,24 @@ function PromocionalesScreen({
     return null
   }
 
+  function deletePromoEditRecord() {
+    if (!promoEditTarget) return
+
+    const { group, nombre } = promoEditTarget
+
+    setPromoRows((current) => {
+      const list = current[group]
+      const idx = list.findIndex((item) => item.nombre === nombre)
+      if (idx === -1) return current
+
+      return {
+        ...current,
+        [group]: list.filter((_, i) => i !== idx),
+      }
+    })
+    setPromoEditTarget(null)
+  }
+
   return (
     <section className="screen">
       <ScreenHeader
@@ -2832,6 +2887,7 @@ function PromocionalesScreen({
           key={`${promoEditTarget.group}-${promoEditTarget.nombre}`}
           row={promoEditRow}
           onClose={() => setPromoEditTarget(null)}
+          onDelete={deletePromoEditRecord}
           onSave={submitPromoEdit}
         />
       ) : null}
@@ -3006,10 +3062,12 @@ function GastosScreen({
 
 function PromoEditSheet({
   onClose,
+  onDelete,
   onSave,
   row,
 }: {
   onClose: () => void
+  onDelete: () => void
   onSave: (draft: PromoEditDraft) => string | null
   row: PromoRowStored
 }) {
@@ -3020,6 +3078,7 @@ function PromoEditSheet({
     entregadoPor: row.entregadoPor ?? 'Delfi',
   }))
   const [error, setError] = useState<string | null>(null)
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
 
   function handleSave() {
     const message = onSave(draft)
@@ -3033,71 +3092,114 @@ function PromoEditSheet({
     onClose()
   }
 
-  return (
-    <div className="sheet-backdrop" onClick={onClose}>
-      <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
-        <div className="grabber" />
-        <div className="sheet-head">
-          <div>
-            <h2>Editar promocional</h2>
-          </div>
-          <button className="close-button" onClick={onClose} type="button">
-            ×
-          </button>
-        </div>
+  function handleConfirmDelete() {
+    onDelete()
+    setConfirmDeleteOpen(false)
+  }
 
-        <div className="new-sale-form">
-          <div className="edit-grid">
-            <span className="muted-label promo-draft-deliver-label">Entregado a:</span>
-            <input
-              className="wide"
-              placeholder="Nombre"
-              value={draft.nombre}
-              onChange={(event) => setDraft({ ...draft, nombre: event.target.value })}
-            />
-            <span className="muted-label promo-draft-deliver-label">Cantidad de ejemplares:</span>
-            <input
-              className="wide"
-              inputMode="numeric"
-              placeholder="Unidades"
-              value={draft.unidades}
-              onChange={(event) => setDraft({ ...draft, unidades: event.target.value })}
-            />
-            <span className="muted-label promo-draft-deliver-label">¿Quién lo entregó?</span>
-            <div className="promo-draft-deliver-segmented">
-              <Segmented
-                active={draft.entregadoPor}
-                onChange={(entregadoPor) => setDraft({ ...draft, entregadoPor })}
-                options={PROMO_DELIVER_OPTIONS}
-              />
+  return (
+    <>
+      <div className="sheet-backdrop" onClick={onClose}>
+        <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
+          <div className="grabber" />
+          <div className="sheet-head">
+            <div>
+              <h2>Editar promocional</h2>
             </div>
-            <span className="muted-label promo-draft-deliver-label">¿Entregado?</span>
-            <div className="promo-draft-deliver-segmented">
-              <Segmented
-                active={draft.entregado}
-                onChange={(entregado) =>
-                  setDraft({
-                    ...draft,
-                    entregado,
-                    entregadoPor: entregado === 'SI' ? draft.entregadoPor || 'Delfi' : draft.entregadoPor,
-                  })
-                }
-                options={PROMO_ENTREGADO_SI_NO_OPTIONS}
-              />
-            </div>
+            <button className="close-button" onClick={onClose} type="button">
+              ×
+            </button>
           </div>
-          {error ? <p className="edit-error">{error}</p> : null}
-          <div className="edit-actions">
-            <button className="secondary-button" onClick={onClose} type="button">
-              Cancelar
-            </button>
-            <button className="primary-button red" onClick={handleSave} type="button">
-              Guardar
-            </button>
+
+          <div className="new-sale-form">
+            <div className="edit-grid">
+              <span className="muted-label promo-draft-deliver-label">Entregado a:</span>
+              <input
+                className="wide"
+                placeholder="Nombre"
+                value={draft.nombre}
+                onChange={(event) => setDraft({ ...draft, nombre: event.target.value })}
+              />
+              <span className="muted-label promo-draft-deliver-label">Cantidad de ejemplares:</span>
+              <input
+                className="wide"
+                inputMode="numeric"
+                placeholder="Unidades"
+                value={draft.unidades}
+                onChange={(event) => setDraft({ ...draft, unidades: event.target.value })}
+              />
+              <span className="muted-label promo-draft-deliver-label">¿Quién lo entregó?</span>
+              <div className="promo-draft-deliver-segmented">
+                <Segmented
+                  active={draft.entregadoPor}
+                  onChange={(entregadoPor) => setDraft({ ...draft, entregadoPor })}
+                  options={PROMO_DELIVER_OPTIONS}
+                />
+              </div>
+              <span className="muted-label promo-draft-deliver-label">¿Entregado?</span>
+              <div className="promo-draft-deliver-segmented">
+                <Segmented
+                  active={draft.entregado}
+                  onChange={(entregado) =>
+                    setDraft({
+                      ...draft,
+                      entregado,
+                      entregadoPor: entregado === 'SI' ? draft.entregadoPor || 'Delfi' : draft.entregadoPor,
+                    })
+                  }
+                  options={PROMO_ENTREGADO_SI_NO_OPTIONS}
+                />
+              </div>
+            </div>
+            {error ? <p className="edit-error">{error}</p> : null}
+            <div className="edit-actions promo-edit-actions">
+              <button
+                className="promo-edit-delete-button"
+                onClick={() => setConfirmDeleteOpen(true)}
+                type="button"
+              >
+                Eliminar
+              </button>
+              <div className="promo-edit-actions-trailing">
+                <button className="secondary-button" onClick={onClose} type="button">
+                  Cancelar
+                </button>
+                <button className="primary-button red" onClick={handleSave} type="button">
+                  Guardar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+
+      {confirmDeleteOpen ? (
+        <div
+          aria-labelledby="promo-delete-title"
+          aria-modal="true"
+          className="nested-confirm-backdrop"
+          role="dialog"
+          onClick={() => setConfirmDeleteOpen(false)}
+        >
+          <div className="nested-confirm-dialog" onClick={(event) => event.stopPropagation()}>
+            <h3 className="nested-confirm-title" id="promo-delete-title">
+              ¿Eliminar registro?
+            </h3>
+            <p className="nested-confirm-body">
+              Se va a quitar <strong>{row.nombre}</strong> de promocionales. Esta acción no se puede deshacer.
+            </p>
+            <div className="nested-confirm-actions">
+              <button className="secondary-button" onClick={() => setConfirmDeleteOpen(false)} type="button">
+                Cancelar
+              </button>
+              <button className="primary-button red" onClick={handleConfirmDelete} type="button">
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   )
 }
 
@@ -3608,7 +3710,22 @@ function DeliveryIndicator({
 }
 
 function PaymentMethodIcon({ method }: { method: Sale['paymentMethod'] }) {
-  const label = VENTAS_PAYMENT_METHOD_LABELS[method]
+  const label = ventasPaymentMethodLabel(method)
+
+  if (method === null) {
+    return (
+      <span
+        aria-label={label}
+        className="sale-row-payment-icon sale-row-payment-icon--unset"
+        role="img"
+        title={label}
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M7 12h10" />
+        </svg>
+      </span>
+    )
+  }
 
   const graphic =
     method === 'transferencia' ? (
@@ -3900,7 +4017,7 @@ function createEmptySaleDraft(): SaleDraft {
     quantity: '',
     unitPriceArs: '15000',
     paidArs: '',
-    paymentMethod: 'transferencia',
+    paymentMethod: null,
     transferDestination: 'Delfi',
     paymentStatus: 'pendiente',
     invoiceStatus: 'pendiente',
@@ -3956,9 +4073,20 @@ function cobradoPaidValidationError(draft: SaleDraft): string | null {
   return null
 }
 
-/** Ya no se ofrece «Otro» en el formulario; hay que migrar ventas viejas al guardar. */
+function cobradoPaymentMethodValidationError(draft: SaleDraft): string | null {
+  if (draft.paymentStatus !== 'cobrado') return null
+
+  if (draft.paymentMethod !== 'transferencia' && draft.paymentMethod !== 'efectivo') {
+    return 'Si elegís Cobrado, seleccioná Transferencia o Efectivo como medio de pago.'
+  }
+
+  return null
+}
+
+/** Ya no se ofrece «Otro» en el formulario; al cobrar hay que migrar ventas viejas. */
 function otroPaymentMethodValidationError(draft: SaleDraft): string | null {
   if (draft.paymentMethod !== 'otro') return null
+  if (draft.paymentStatus !== 'cobrado') return null
 
   return 'Elegí Transferencia o Efectivo como medio de pago antes de guardar.'
 }
