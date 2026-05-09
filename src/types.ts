@@ -22,6 +22,9 @@ export type StockAllocation = {
   boxes: number
 }
 
+/** Cuenta destino cuando el cobro fue por transferencia. */
+export type SaleTransferDestination = 'Delfi' | 'Mechi'
+
 export type Sale = {
   id: string
   date: string
@@ -31,6 +34,8 @@ export type Sale = {
   unitPriceArs: number | null
   paidArs: number
   paymentMethod: 'transferencia' | 'efectivo' | 'otro'
+  /** Solo si `paymentMethod === 'transferencia'`; ventas viejas pueden tener null. */
+  transferDestination: SaleTransferDestination | null
   paymentStatus: 'pendiente' | 'cobrado'
   invoiceStatus?: 'facturado' | 'pendiente' | 'no_aplica'
   delivered?: string | null

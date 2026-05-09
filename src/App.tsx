@@ -37,7 +37,7 @@ import {
   type SaleUpdateInput,
   type VentasData,
 } from './lib/ventasRepository'
-import type { PartnerGainBreakdown, PartnerSettlement, Sale, SplitPartnerKey, StockAllocation } from './types'
+import type { PartnerGainBreakdown, PartnerSettlement, Sale, SaleTransferDestination, SplitPartnerKey, StockAllocation } from './types'
 
 /** Alias Mercado Pago para cobros a nombre de Mechi (distinto del alias principal en proyecto). */
 const MECHI_MP_PAYMENT_ALIAS = 'mambula.cancion'
@@ -50,6 +50,7 @@ type SaleDraft = {
   unitPriceArs: string
   paidArs: string
   paymentMethod: Sale['paymentMethod']
+  transferDestination: SaleTransferDestination
   paymentStatus: Sale['paymentStatus']
   invoiceStatus: NonNullable<Sale['invoiceStatus']>
   delivered: string
@@ -380,15 +381,16 @@ function App() {
   const soldCopies = sales.reduce((total, sale) => total + (sale.quantity ?? 0), 0)
   const grossSalesArs = saleBreakdowns.reduce((total, item) => total + item.grossArs, 0)
 
+  /** Suma `paid_ars`: todas las ventas cargadas (tras paginar la tabla `sales` en Supabase). */
+  const salesPaidArsTotal = useMemo(() => sales.reduce((sum, sale) => sum + sale.paidArs, 0), [sales])
+
   const ventasTabSales = useMemo(() => sales.filter((sale) => !isEncargoSale(sale)), [sales])
   const encargoSales = useMemo(() => sales.filter(isEncargoSale), [sales])
-  const ventasTabBreakdowns = useMemo(
-    () => ventasTabSales.map((sale) => calculateSaleBreakdown(sale, projectConfig)),
-    [ventasTabSales, projectConfig],
-  )
-  const ventasTabGrossArs = ventasTabBreakdowns.reduce((total, item) => total + item.grossArs, 0)
   const ventasTabPaidArs = ventasTabSales.reduce((total, sale) => total + sale.paidArs, 0)
-  const ventasTabPendingArs = ventasTabGrossArs - ventasTabPaidArs
+  const ventasTabPendingArs = useMemo(
+    () => ventasTabSales.reduce((sum, sale) => sum + Math.max(0, getSalePending(sale)), 0),
+    [ventasTabSales],
+  )
 
   const abrSplit = useMemo(
     () => computeAbrInventorySplit(stockAllocations, projectConfig.costRules),
@@ -556,6 +558,12 @@ function App() {
       return
     }
 
+    const otroMedioErr = otroPaymentMethodValidationError(saleDraft)
+    if (otroMedioErr) {
+      setEditError(otroMedioErr)
+      return
+    }
+
     const input: SaleUpdateInput = {
       id: saleId,
       buyer: saleDraft.buyer.trim(),
@@ -564,6 +572,8 @@ function App() {
       unitPriceArs: parseOptionalNumber(saleDraft.unitPriceArs),
       paidArs: parseOptionalNumber(saleDraft.paidArs) ?? 0,
       paymentMethod: saleDraft.paymentMethod,
+      transferDestination:
+        saleDraft.paymentMethod === 'transferencia' ? saleDraft.transferDestination : null,
       paymentStatus: saleDraft.paymentStatus,
       invoiceStatus: saleDraft.invoiceStatus,
       delivered: emptyToNull(saleDraft.delivered),
@@ -621,6 +631,12 @@ function App() {
       return
     }
 
+    const otroMedioErr = otroPaymentMethodValidationError(createDraft)
+    if (otroMedioErr) {
+      setEditError(otroMedioErr)
+      return
+    }
+
     try {
       setSavingNewSale(true)
       setEditError(null)
@@ -675,6 +691,8 @@ function App() {
         unitPriceArs: sale.unitPriceArs,
         paidArs: sale.paidArs,
         paymentMethod: sale.paymentMethod,
+        transferDestination:
+          sale.paymentMethod === 'transferencia' ? sale.transferDestination : null,
         paymentStatus: sale.paymentStatus,
         invoiceStatus: sale.invoiceStatus ?? 'pendiente',
         delivered: nextDelivered,
@@ -750,6 +768,7 @@ function App() {
           mechiCopyStatus={mechiCopyStatus}
           expenses={expenses}
           grossSalesArs={grossSalesArs}
+          salesPaidArsTotal={salesPaidArsTotal}
           loadError={loadError}
           loading={loading}
           onAcSchemeSoldQtyChange={setAcSchemeSoldQty}
@@ -768,7 +787,6 @@ function App() {
       ) : null}
       {tab === 'ventas' ? (
         <VentasScreen
-          grossSalesArs={ventasTabGrossArs}
           paidSalesArs={ventasTabPaidArs}
           pendingSalesArs={ventasTabPendingArs}
           sales={ventasTabSales}
@@ -1036,6 +1054,7 @@ function HomeScreen({
   onAcSchemeSoldQtyChange,
   partnerGainRows,
   partnerSettlements,
+  salesPaidArsTotal,
   projectConfig,
   promoRows,
   sales,
@@ -1061,6 +1080,7 @@ function HomeScreen({
   onAcSchemeSoldQtyChange: (units: number) => void
   partnerGainRows: PartnerGainBreakdown[]
   partnerSettlements: PartnerSettlement[]
+  salesPaidArsTotal: number
   projectConfig: VentasData['projectConfig']
   promoRows: PromoRowsStored
   sales: Sale[]
@@ -1230,7 +1250,7 @@ function HomeScreen({
           <StatCard label="Primera tirada" sub="ejemplares" value={numberFormatter.format(projectConfig.firstPrintRun.copies)} />
           <StatCard label="Cajas" sub={`${numberFormatter.format(copiesPerBox)} libros por caja`} value={numberFormatter.format(projectConfig.firstPrintRun.boxes)} />
           <StatCard label="Vendidos" sub={`${numberFormatter.format(availableCopies)} disponibles`} value={numberFormatter.format(soldCopies)} />
-          <StatCard label="Ingresos" sub="desde ventas" value={currencyArsFormatter.format(grossSalesArs)} />
+          <StatCard label="Ingresos" sub="Suma pagados" value={currencyArsFormatter.format(salesPaidArsTotal)} />
         </div>
 
         <div className="ios-card">
@@ -1517,8 +1537,17 @@ function HomeScreen({
   )
 }
 
+type VentasStatusFilter = 'todas' | 'pendiente' | 'pagados' | 'porEntregar' | 'porFacturar'
+
+type VentasFilterAxis = 'estado' | 'medio'
+
+const VENTAS_PAYMENT_METHOD_LABELS: Record<Sale['paymentMethod'], string> = {
+  transferencia: 'Transferencia',
+  efectivo: 'Efectivo',
+  otro: 'Otro',
+}
+
 function VentasScreen({
-  grossSalesArs,
   paidSalesArs,
   pendingSalesArs,
   onSelectSale,
@@ -1526,7 +1555,6 @@ function VentasScreen({
   sales,
   togglingDeliveryId,
 }: {
-  grossSalesArs: number
   paidSalesArs: number
   pendingSalesArs: number
   onSelectSale: (sale: Sale) => void
@@ -1534,7 +1562,10 @@ function VentasScreen({
   sales: Sale[]
   togglingDeliveryId: string | null
 }) {
-  const [filter, setFilter] = useState<'todas' | 'pendiente' | 'porEntregar' | 'porFacturar'>('todas')
+  const [filter, setFilter] = useState<VentasStatusFilter>('todas')
+  const [paidViaFilter, setPaidViaFilter] = useState<Sale['paymentMethod'] | null>(null)
+  const [ventasFilterAxis, setVentasFilterAxis] = useState<VentasFilterAxis>('estado')
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [sellerFilter, setSellerFilter] = useState<string | null>(null)
 
@@ -1544,20 +1575,69 @@ function VentasScreen({
 
   const filteredSales = useMemo(() => {
     return sellerScopedSales.filter((sale) => {
-      const matchesFilter =
-        filter === 'todas' ||
-        (filter === 'pendiente' && isSalePending(sale)) ||
-        (filter === 'porEntregar' && !isDelivered(sale)) ||
-        (filter === 'porFacturar' && isInvoicePending(sale))
+      let matchesAxis = true
+
+      if (ventasFilterAxis === 'estado') {
+        matchesAxis =
+          filter === 'todas' ||
+          (filter === 'pendiente' && isSalePending(sale)) ||
+          (filter === 'pagados' && getSaleStatus(sale) === 'pagado') ||
+          (filter === 'porEntregar' && !isDelivered(sale)) ||
+          (filter === 'porFacturar' && isInvoicePending(sale))
+      } else {
+        matchesAxis =
+          paidViaFilter !== null &&
+          sale.paymentStatus === 'cobrado' &&
+          sale.paymentMethod === paidViaFilter
+      }
+
       const matchesQuery = sale.buyer.toLowerCase().includes(query.toLowerCase())
 
-      return matchesFilter && matchesQuery
+      return matchesAxis && matchesQuery
     })
-  }, [filter, query, sellerScopedSales])
+  }, [filter, paidViaFilter, query, sellerScopedSales, ventasFilterAxis])
 
   const pendingCount = sellerScopedSales.filter(isSalePending).length
   const deliveryCount = sellerScopedSales.filter((sale) => !isDelivered(sale)).length
   const invoicePendingCount = sellerScopedSales.filter(isInvoicePending).length
+  const paidTransferenciaCount = sellerScopedSales.filter(
+    (sale) => sale.paymentStatus === 'cobrado' && sale.paymentMethod === 'transferencia',
+  ).length
+  const paidEfectivoCount = sellerScopedSales.filter(
+    (sale) => sale.paymentStatus === 'cobrado' && sale.paymentMethod === 'efectivo',
+  ).length
+  const paidOtroCount = sellerScopedSales.filter(
+    (sale) => sale.paymentStatus === 'cobrado' && sale.paymentMethod === 'otro',
+  ).length
+
+  const pagadosCount = sellerScopedSales.filter((sale) => getSaleStatus(sale) === 'pagado').length
+
+  const ventasFilterCounts = useMemo(
+    () => ({
+      todas: sellerScopedSales.length,
+      pendiente: pendingCount,
+      pagados: pagadosCount,
+      porEntregar: deliveryCount,
+      porFacturar: invoicePendingCount,
+      paidTransferencia: paidTransferenciaCount,
+      paidEfectivo: paidEfectivoCount,
+      paidOtro: paidOtroCount,
+    }),
+    [
+      deliveryCount,
+      invoicePendingCount,
+      pagadosCount,
+      paidEfectivoCount,
+      paidOtroCount,
+      paidTransferenciaCount,
+      pendingCount,
+      sellerScopedSales.length,
+    ],
+  )
+
+  const ventasAdvancedFiltersActive =
+    ventasFilterAxis === 'medio' || (ventasFilterAxis === 'estado' && filter !== 'todas')
+
   const sellerTotals = useMemo(() => {
     return sellerNames
       .filter((seller) => seller !== AC_STOCK_NAME)
@@ -1578,51 +1658,101 @@ function VentasScreen({
         eyebrow="Mambula"
         title="Ventas"
         subtitle={`${sales.length} transacciones · Mayo 2026`}
+        trailing={
+          <span className="screen-header-trailing">
+            <span className="screen-header-filter-button-wrap">
+              <button
+                aria-label={ventasAdvancedFiltersActive ? 'Filtrar (filtros activos)' : 'Filtrar'}
+                className="screen-header-filter-button"
+                onClick={() => setFilterSheetOpen(true)}
+                type="button"
+              >
+                Filtrar
+              </button>
+              {ventasAdvancedFiltersActive ? (
+                <span className="screen-header-filter-dot" aria-hidden="true" />
+              ) : null}
+            </span>
+          </span>
+        }
       />
 
       <div className="search-box">
         <Icon name="search" />
         <input
+          aria-label="Buscar consumidor"
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Buscar consumidor"
           value={query}
         />
+        {query ? (
+          <button
+            aria-label="Borrar búsqueda"
+            className="search-box-clear"
+            onClick={() => setQuery('')}
+            type="button"
+          >
+            <Icon name="close" />
+          </button>
+        ) : null}
       </div>
 
-      <div className="stats-row">
-        <StatCard label="Total vendido" value={formatCompact(grossSalesArs)} />
-        <StatCard accent="green" label="Pagado" value={formatCompact(paidSalesArs)} />
-        <StatCard accent="orange" label="Por pagar" value={formatCompact(pendingSalesArs)} />
+      <div className="stats-row stats-row--full-currency">
+        <StatCard label="Total vendido" value={currencyArsFormatter.format(paidSalesArs + pendingSalesArs)} />
+        <StatCard
+          accent="green"
+          aria-label="Mostrar solo ventas pagadas"
+          label="Pagado"
+          selected={ventasFilterAxis === 'estado' && filter === 'pagados'}
+          value={currencyArsFormatter.format(paidSalesArs)}
+          onClick={() => {
+            if (ventasFilterAxis === 'estado' && filter === 'pagados') {
+              setFilter('todas')
+              return
+            }
+            setVentasFilterAxis('estado')
+            setPaidViaFilter(null)
+            setFilter('pagados')
+          }}
+        />
+        <StatCard
+          accent="orange"
+          aria-label="Mostrar solo ventas por pagar"
+          label="Por pagar"
+          selected={ventasFilterAxis === 'estado' && filter === 'pendiente'}
+          selectionRing="orange"
+          value={currencyArsFormatter.format(pendingSalesArs)}
+          onClick={() => {
+            if (ventasFilterAxis === 'estado' && filter === 'pendiente') {
+              setFilter('todas')
+              return
+            }
+            setVentasFilterAxis('estado')
+            setPaidViaFilter(null)
+            setFilter('pendiente')
+          }}
+        />
       </div>
 
-      <div className="seller-stats">
+      <div className="seller-stats seller-stats--full-currency">
         {sellerTotals.map((item) => (
           <button
             className={sellerFilter === item.seller ? 'stat-card seller-stat selected' : 'stat-card seller-stat'}
             key={item.seller}
             onClick={() => {
               setSellerFilter((current) => (current === item.seller ? null : item.seller))
+              setVentasFilterAxis('estado')
               setFilter('todas')
+              setPaidViaFilter(null)
             }}
             type="button"
           >
             <span>{item.seller}</span>
-            <strong>{formatCompact(item.total)}</strong>
+            <strong>{currencyArsFormatter.format(item.total)}</strong>
             <p>{item.count} {item.count === 1 ? 'venta' : 'ventas'}</p>
           </button>
         ))}
       </div>
-
-      <Segmented
-        active={filter}
-        options={[
-          { key: 'todas', label: 'Todas', count: sellerScopedSales.length },
-          { key: 'pendiente', label: 'Por pagar', count: pendingCount },
-          { key: 'porEntregar', label: 'Por entregar', count: deliveryCount },
-          { key: 'porFacturar', label: 'Por facturar', count: invoicePendingCount },
-        ]}
-        onChange={setFilter}
-      />
 
       <div className="list-group">
         {filteredSales.map((sale, index) => (
@@ -1638,7 +1768,143 @@ function VentasScreen({
       </div>
 
       {filteredSales.length === 0 ? <p className="empty-message">Sin resultados</p> : null}
+
+      {filterSheetOpen ? (
+        <VentasFilterSheet
+          counts={ventasFilterCounts}
+          filter={filter}
+          filterAxis={ventasFilterAxis}
+          onClose={() => setFilterSheetOpen(false)}
+          onSelectEstado={(key) => {
+            setVentasFilterAxis('estado')
+            setFilter(key)
+          }}
+          onSelectMedio={(value) => {
+            setVentasFilterAxis('medio')
+            setPaidViaFilter(value)
+          }}
+          paidViaFilter={paidViaFilter}
+        />
+      ) : null}
     </section>
+  )
+}
+
+function VentasFilterSheet({
+  counts,
+  filter,
+  filterAxis,
+  onClose,
+  onSelectEstado,
+  onSelectMedio,
+  paidViaFilter,
+}: {
+  counts: {
+    todas: number
+    pendiente: number
+    pagados: number
+    porEntregar: number
+    porFacturar: number
+    paidTransferencia: number
+    paidEfectivo: number
+    paidOtro: number
+  }
+  filter: VentasStatusFilter
+  filterAxis: VentasFilterAxis
+  onClose: () => void
+  onSelectEstado: (value: VentasStatusFilter) => void
+  onSelectMedio: (value: Sale['paymentMethod']) => void
+  paidViaFilter: Sale['paymentMethod'] | null
+}) {
+  const statusOptions: Array<{ key: VentasStatusFilter; label: string; count: number }> = [
+    { key: 'todas', label: 'Todas', count: counts.todas },
+    { key: 'pendiente', label: 'Por pagar', count: counts.pendiente },
+    { key: 'pagados', label: 'Pagados', count: counts.pagados },
+    { key: 'porEntregar', label: 'Por entregar', count: counts.porEntregar },
+    { key: 'porFacturar', label: 'Por facturar', count: counts.porFacturar },
+  ]
+
+  const paidKeyCount: Record<Sale['paymentMethod'], number> = {
+    transferencia: counts.paidTransferencia,
+    efectivo: counts.paidEfectivo,
+    otro: counts.paidOtro,
+  }
+
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
+        <div className="grabber" />
+        <div className="sheet-head">
+          <div>
+            <h2>Filtrar ventas</h2>
+            <p>Solo aplica un criterio a la vez: estado de la venta o medio de pago al cobrar.</p>
+          </div>
+          <button className="close-button" onClick={onClose} type="button">
+            ×
+          </button>
+        </div>
+
+        <section className="sheet-list-section">
+          <h3 id="ventas-filter-estado-heading">Estado</h3>
+          <div className="sheet-list" role="radiogroup" aria-labelledby="ventas-filter-estado-heading">
+            {statusOptions.map((option) => {
+              const selected = filterAxis === 'estado' && filter === option.key
+
+              return (
+                <button
+                  aria-checked={selected}
+                  className={`filter-sheet-row ${selected ? 'selected' : ''}`}
+                  key={option.key}
+                  onClick={() => onSelectEstado(option.key)}
+                  role="radio"
+                  type="button"
+                >
+                  <span className="filter-sheet-row-main">
+                    <span className="filter-sheet-radio" aria-hidden="true">
+                      <span className="filter-sheet-radio-dot" />
+                    </span>
+                    <span className="filter-sheet-row-label">{option.label}</span>
+                  </span>
+                  <span className="filter-sheet-row-count">{option.count}</span>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className="sheet-list-section">
+          <h3 id="ventas-filter-medio-heading">Medio de pago</h3>
+          <div className="sheet-list" role="radiogroup" aria-labelledby="ventas-filter-medio-heading">
+            {(['transferencia', 'efectivo', 'otro'] as const).map((key) => {
+              const selected = filterAxis === 'medio' && paidViaFilter === key
+
+              return (
+                <button
+                  aria-checked={selected}
+                  className={`filter-sheet-row ${selected ? 'selected' : ''}`}
+                  key={key}
+                  onClick={() => onSelectMedio(key)}
+                  role="radio"
+                  type="button"
+                >
+                  <span className="filter-sheet-row-main">
+                    <span className="filter-sheet-radio" aria-hidden="true">
+                      <span className="filter-sheet-radio-dot" />
+                    </span>
+                    <span className="filter-sheet-row-label">{VENTAS_PAYMENT_METHOD_LABELS[key]}</span>
+                  </span>
+                  <span className="filter-sheet-row-count">{paidKeyCount[key]}</span>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        <button className="primary-button full" onClick={onClose} type="button">
+          Aplicar
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -1857,7 +2123,12 @@ function SaleRow({
           </div>
         </div>
         <div className="sale-row-side">
-          <span className={pendingArs > 0 ? 'amount danger' : 'amount'}>{currencyArsFormatter.format(totalArs)}</span>
+          <div className="sale-row-amount-with-icon">
+            <PaymentMethodIcon method={sale.paymentMethod} />
+            <span className={pendingArs > 0 ? 'amount danger' : 'amount'}>
+              {currencyArsFormatter.format(totalArs)}
+            </span>
+          </div>
           <StatusPill kind={status} />
         </div>
       </div>
@@ -2016,6 +2287,10 @@ function SaleDetailSheet({
           <ListItem label="Unidades" value={sale.quantity?.toString() ?? '-'} />
           <ListItem label="Precio unitario" value={sale.unitPriceArs === null ? '-' : currencyArsFormatter.format(sale.unitPriceArs)} />
           <ListItem label="Subtotal" value={currencyArsFormatter.format(totalArs)} />
+          <ListItem label="Medio de pago" value={VENTAS_PAYMENT_METHOD_LABELS[sale.paymentMethod]} />
+          {sale.paymentMethod === 'transferencia' ? (
+            <ListItem label="Cuenta destino" value={sale.transferDestination ?? 'Sin registrar'} />
+          ) : null}
           <ListItem label="Vendedor" value={sale.seller ?? '-'} />
         </ListGroup>
         <ListGroup title="Entrega">
@@ -2165,6 +2440,11 @@ function SaleDraftSheet({
     draft.seller.trim() !== '' &&
     !(SOCIA_SELLERS as readonly string[]).includes(draft.seller.trim())
 
+  const paymentMethodSegmentActive: 'transferencia' | 'efectivo' | null =
+    draft.paymentMethod === 'transferencia' || draft.paymentMethod === 'efectivo'
+      ? draft.paymentMethod
+      : null
+
   return (
     <div className="sheet-backdrop" onClick={onClose}>
       <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
@@ -2269,16 +2549,31 @@ function SaleDraftSheet({
 
                 <div className="new-sale-field">
                   <span className="new-sale-field-label">Medio de pago</span>
-                  <Segmented<Sale['paymentMethod']>
-                    active={draft.paymentMethod}
+                  <Segmented<'transferencia' | 'efectivo'>
+                    active={paymentMethodSegmentActive}
                     onChange={(paymentMethod) => setDraft({ ...draft, paymentMethod })}
                     options={[
                       { key: 'transferencia', label: 'Transferencia' },
                       { key: 'efectivo', label: 'Efectivo' },
-                      { key: 'otro', label: 'Otro' },
                     ]}
                   />
                 </div>
+
+                {draft.paymentMethod === 'transferencia' ? (
+                  <div className="new-sale-field">
+                    <span className="new-sale-field-label" id="new-sale-transfer-dest-label">
+                      Cuenta destino
+                    </span>
+                    <Segmented<SaleTransferDestination>
+                      active={draft.transferDestination}
+                      onChange={(transferDestination) => setDraft({ ...draft, transferDestination })}
+                      options={[
+                        { key: 'Delfi', label: 'Delfi' },
+                        { key: 'Mechi', label: 'Mechi' },
+                      ]}
+                    />
+                  </div>
+                ) : null}
 
                 <div className="new-sale-field">
                   <span className="new-sale-field-label">Pago</span>
@@ -3099,22 +3394,48 @@ function ScreenHeader({
 
 function StatCard({
   accent,
+  'aria-label': ariaLabel,
   label,
+  onClick,
+  selected,
+  selectionRing,
   sub,
   value,
 }: {
   accent?: 'green' | 'orange' | string
+  'aria-label'?: string
   label: string
+  onClick?: () => void
+  selected?: boolean
+  selectionRing?: 'green' | 'orange'
   sub?: string
   value: string
 }) {
-  return (
-    <article className="stat-card">
+  const inner = (
+    <>
       <span>{label}</span>
       <strong className={accent ? `accent-${accent}` : undefined}>{value}</strong>
       {sub ? <p>{sub}</p> : null}
-    </article>
+    </>
   )
+
+  if (onClick) {
+    const ringClass = selected && selectionRing === 'orange' ? ' selection-ring-orange' : ''
+
+    return (
+      <button
+        aria-label={ariaLabel ?? label}
+        aria-pressed={selected}
+        className={`stat-card stat-card--clickable${selected ? ' selected' : ''}${ringClass}`}
+        onClick={onClick}
+        type="button"
+      >
+        {inner}
+      </button>
+    )
+  }
+
+  return <article className="stat-card">{inner}</article>
 }
 
 function Segmented<T extends string>({
@@ -3122,7 +3443,7 @@ function Segmented<T extends string>({
   onChange,
   options,
 }: {
-  active: T
+  active: T | null
   onChange: (value: T) => void
   options: Array<{ key: T; label: string; count?: number }>
 }) {
@@ -3130,7 +3451,8 @@ function Segmented<T extends string>({
     <div className="segmented">
       {options.map((option) => (
         <button
-          className={active === option.key ? 'selected' : ''}
+          aria-pressed={active !== null && active === option.key}
+          className={active !== null && active === option.key ? 'selected' : ''}
           key={option.key}
           onClick={() => onChange(option.key)}
           type="button"
@@ -3272,6 +3594,43 @@ function DeliveryIndicator({
   )
 }
 
+function PaymentMethodIcon({ method }: { method: Sale['paymentMethod'] }) {
+  const label = VENTAS_PAYMENT_METHOD_LABELS[method]
+
+  const graphic =
+    method === 'transferencia' ? (
+      <>
+        {/* Flechas izquierda/derecha — más anchas y con más contraste que una sola línea */}
+        <path d="M8 12h8" />
+        <path d="M17 12l3.25-3M17 12l3.25 3" />
+        <path d="M7 12l-3.25-3M7 12l-3.25 3" />
+      </>
+    ) : method === 'efectivo' ? (
+      <>
+        <rect height="11" rx="2" width="18" x="3" y="7" />
+        <circle cx="12" cy="12.5" r="2.5" />
+      </>
+    ) : (
+      <>
+        <path d="M4 9a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9Z" />
+        <path d="M17 9h3a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-3a3 3 0 0 1 0-6Z" />
+      </>
+    )
+
+  return (
+    <span
+      aria-label={label}
+      className={`sale-row-payment-icon sale-row-payment-icon--${method}`}
+      role="img"
+      title={label}
+    >
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        {graphic}
+      </svg>
+    </span>
+  )
+}
+
 function InvoiceIcon({ status }: { status: NonNullable<Sale['invoiceStatus']> }) {
   const docPaths = (
     <>
@@ -3347,11 +3706,12 @@ function PayerChip({ name }: { name: string }) {
   return <span className={`payer-chip payer-${name.toLowerCase()}`}>{name}</span>
 }
 
-type IconName = 'search' | 'chart' | 'home' | 'bag' | 'person' | 'package' | 'chevron-down'
+type IconName = 'search' | 'close' | 'chart' | 'home' | 'bag' | 'person' | 'package' | 'chevron-down'
 
 function Icon({ name }: { name: IconName }) {
   const paths = {
     search: <><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></>,
+    close: <path d="M18 6 6 18M6 6l12 12" />,
     chart: <><path d="M3 3v18h18" /><path d="M7 14l4-4 4 4 5-6" /></>,
     home: <><path d="M3 12 12 3l9 9" /><path d="M5 10v10h14V10" /></>,
     bag: <><path d="M6 8h12l-1 13H7L6 8Z" /><path d="M9 8a3 3 0 0 1 6 0" /></>,
@@ -3512,6 +3872,7 @@ function saleToDraft(sale: Sale): SaleDraft {
     unitPriceArs: sale.unitPriceArs?.toString() ?? '',
     paidArs: sale.paidArs.toString(),
     paymentMethod: sale.paymentMethod,
+    transferDestination: sale.transferDestination ?? 'Delfi',
     paymentStatus: sale.paymentStatus,
     invoiceStatus: sale.invoiceStatus ?? 'pendiente',
     delivered: sale.delivered ?? '',
@@ -3527,6 +3888,7 @@ function createEmptySaleDraft(): SaleDraft {
     unitPriceArs: '15000',
     paidArs: '',
     paymentMethod: 'transferencia',
+    transferDestination: 'Delfi',
     paymentStatus: 'pendiente',
     invoiceStatus: 'pendiente',
     delivered: 'NO',
@@ -3581,6 +3943,13 @@ function cobradoPaidValidationError(draft: SaleDraft): string | null {
   return null
 }
 
+/** Ya no se ofrece «Otro» en el formulario; hay que migrar ventas viejas al guardar. */
+function otroPaymentMethodValidationError(draft: SaleDraft): string | null {
+  if (draft.paymentMethod !== 'otro') return null
+
+  return 'Elegí Transferencia o Efectivo como medio de pago antes de guardar.'
+}
+
 function draftToSaleInput(draft: SaleDraft): SaleCreateInput {
   return {
     buyer: draft.buyer.trim(),
@@ -3589,6 +3958,8 @@ function draftToSaleInput(draft: SaleDraft): SaleCreateInput {
     unitPriceArs: parseOptionalNumber(draft.unitPriceArs),
     paidArs: parseOptionalNumber(draft.paidArs) ?? 0,
     paymentMethod: draft.paymentMethod,
+    transferDestination:
+      draft.paymentMethod === 'transferencia' ? draft.transferDestination : null,
     paymentStatus: draft.paymentStatus,
     invoiceStatus: draft.invoiceStatus,
     delivered: emptyToNull(draft.delivered),

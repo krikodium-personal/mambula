@@ -1,18 +1,28 @@
 #!/usr/bin/env python3
 """
-Lee Ventas Mambula *.xlsx (pestañas VENTAS + Promocionales) y escribe
-supabase/migrations/0022_resync_sales_excel_order.sql (DELETE + INSERT + promos).
+Lee Ventas Mambula *.xlsx (pestaña VENTAS; Promocionales opcional) y escribe SQL
+DELETE public.sales + INSERT + opcional UPDATE promocional_rows.
 
-Requiere haber aplicado antes la migración 0021_sales_sheet_position.sql.
+Mapeo de columnas (encabezados, sin distinguir mayúsculas / espacios laterales):
+  Consumidor → buyer
+  Unidades → quantity
+  Precio → unit_price_ars
+  Total → referencia (cant × precio); si diff grande solo advertimos en cabecera SQL
+  Vendedor → seller
+  Pagado → paid_ars (valor en Excel)
+  Entregado → delivered (SI → SI)
+  Facturado → invoice_status (SI → facturado; vacío → pendiente)
+  Notas → billing_notes
+
+payment_method / payment_status se infieren como antes (notas + monto vs total).
 
 Uso:
-  python3 scripts/generate_sync_from_excel.py "/ruta/archivo.xlsx" [ruta_salida.sql]
+  python3 scripts/generate_sync_from_excel.py "/ruta/archivo.xlsx" [ruta_salida.sql] [sold_at YYYY-MM-DD]
 """
 
 from __future__ import annotations
 
 import json
-import re
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -20,10 +30,8 @@ from pathlib import Path
 import openpyxl
 
 ROOT = Path(__file__).resolve().parents[1]
-# Por defecto escribe la resincronización con orden de planilla (ejecutar tras 0021).
-DEFAULT_OUT = ROOT / "supabase/migrations/0022_resync_sales_excel_order.sql"
+DEFAULT_OUT = ROOT / "supabase/migrations/0023_resync_sales_from_excel.sql"
 
-SOLD_AT = "2026-05-09"
 SOC_PROMO = frozenset({"Delfi", "Mechi", "Susan"})
 
 
@@ -31,6 +39,12 @@ def esc_sql(s: str | None) -> str:
     if s is None:
         return "NULL"
     return "'" + str(s).replace("'", "''") + "'"
+
+
+def norm_header(h) -> str:
+    if h is None:
+        return ""
+    return str(h).strip().lower()
 
 
 def num_cell(v) -> int:
@@ -83,26 +97,66 @@ def delivered_cell(ent) -> str | None:
     return s
 
 
+def build_column_index(header_row: tuple) -> dict[str, int]:
+    idx: dict[str, int] = {}
+    aliases = {
+        "consumidor": "consumidor",
+        "unidades": "unidades",
+        "precio": "precio",
+        "total": "total",
+        "vendedor": "vendedor",
+        "pagado": "pagado",
+        "entregado": "entregado",
+        "facturado": "facturado",
+        "notas": "notas",
+    }
+    for i, cell in enumerate(header_row):
+        key = norm_header(cell)
+        if key in aliases:
+            idx[aliases[key]] = i
+    required = ("consumidor", "unidades", "precio", "vendedor", "pagado", "entregado", "facturado")
+    missing = [c for c in required if c not in idx]
+    if missing:
+        raise ValueError(f"Faltan columnas en VENTAS: {missing}. Fila 1: {header_row!r}")
+    return idx
+
+
 def parse_ventas(ws) -> list[tuple]:
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
         return []
-    header = rows[0]
+    idx = build_column_index(rows[0])
+    i_cons = idx["consumidor"]
+    i_qty = idx["unidades"]
+    i_precio = idx["precio"]
+    i_total = idx.get("total")
+    i_seller = idx["vendedor"]
+    i_pagado = idx["pagado"]
+    i_ent = idx["entregado"]
+    i_fact = idx["facturado"]
+    i_notas = idx.get("notas")
+
     out: list[tuple] = []
     for r in rows[1:]:
-        if not r or not r[0]:
+        if not r or len(r) <= max(idx.values()):
             continue
-        buyer = str(r[0]).strip()
+        buyer_cell = r[i_cons]
+        if buyer_cell is None or str(buyer_cell).strip() == "":
+            continue
+        buyer = str(buyer_cell).strip()
         if buyer.upper() == "TOTAL":
             continue
-        qty = r[1]
-        unit_p = r[2]
-        total_x = r[3]
-        seller = str(r[4]).strip() if r[4] else ""
-        pagado = r[5]
-        entregado = r[6]
-        facturado = r[7]
-        notas = str(r[8]).strip() if len(r) > 8 and r[8] else ""
+
+        qty = r[i_qty]
+        unit_p = r[i_precio]
+        total_x = r[i_total] if i_total is not None else None
+        seller = str(r[i_seller]).strip() if r[i_seller] else ""
+        pagado = r[i_pagado]
+        entregado = r[i_ent]
+        facturado = r[i_fact]
+        notas = ""
+        if i_notas is not None and len(r) > i_notas and r[i_notas]:
+            notas = str(r[i_notas]).strip()
 
         q = num_cell(qty) if qty is not None else None
         if q is None or q <= 0:
@@ -117,11 +171,10 @@ def parse_ventas(ws) -> list[tuple]:
 
         total_calc = q * up
         tx = num_cell(total_x) if total_x is not None else 0
-        if tx > 0 and abs(tx - total_calc) > total_calc * 0.15:
+        if tx > 0 and abs(tx - total_calc) > max(total_calc * 0.15, 1):
             pass
 
-        paid_raw = num_cell(pagado)
-        paid = min(paid_raw, total_calc) if total_calc > 0 else paid_raw
+        paid_raw = max(0, num_cell(pagado))
 
         inv = invoice_status_from_fact(facturado)
 
@@ -139,15 +192,14 @@ def parse_ventas(ws) -> list[tuple]:
 
         delivered = delivered_cell(entregado)
 
-        if paid >= total_calc and total_calc > 0:
+        if total_calc > 0 and paid_raw >= total_calc:
             pay_stat = "cobrado"
-            paid_adj = total_calc
-        elif paid > 0:
+        elif paid_raw > 0:
             pay_stat = "pendiente"
-            paid_adj = paid
         else:
             pay_stat = "pendiente"
-            paid_adj = 0
+
+        paid_adj = paid_raw
 
         out.append(
             (
@@ -215,23 +267,35 @@ def parse_promos(ws) -> dict[str, list[dict]]:
 def main():
     xlsx = Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else None
     out_path = Path(sys.argv[2]).expanduser() if len(sys.argv) > 2 else DEFAULT_OUT
+    sold_at = sys.argv[3] if len(sys.argv) > 3 else "2026-05-06"
+
     if not xlsx or not xlsx.is_file():
         print(
-            "Uso: python3 scripts/generate_sync_from_excel.py /ruta/al/archivo.xlsx [ruta_salida.sql]",
+            "Uso: python3 scripts/generate_sync_from_excel.py /ruta/al/archivo.xlsx [salida.sql] [YYYY-MM-DD]",
             file=sys.stderr,
         )
         sys.exit(1)
 
     wb = openpyxl.load_workbook(xlsx, read_only=True, data_only=True)
+    if "VENTAS" not in wb.sheetnames:
+        wb.close()
+        print("El libro debe tener pestaña VENTAS.", file=sys.stderr)
+        sys.exit(1)
+
     ventas = parse_ventas(wb["VENTAS"])
-    promos = parse_promos(wb["Promocionales"])
+    had_promos_sheet = "Promocionales" in wb.sheetnames
+    if had_promos_sheet:
+        promos = parse_promos(wb["Promocionales"])
+    else:
+        promos = None
+
     wb.close()
 
     lines = [
-        "-- Resincronización desde Excel (mismo contenido que la importación + orden de planilla).",
-        "-- Requiere migración 0021_sales_sheet_position.sql aplicada antes.",
-        "-- Fecha de venta unificada:",
-        f"-- sold_at = {SOLD_AT}",
+        "-- Reemplazo total de public.sales desde Excel (Ventas Mambula).",
+        "-- Generado por scripts/generate_sync_from_excel.py",
+        f"-- Fuente: {xlsx.name}",
+        f"-- sold_at unificado: {sold_at}",
         "",
         "delete from public.sales;",
         "",
@@ -247,7 +311,7 @@ def main():
         buyer, seller, q, up, pm, ps, paid, deliv, bill, inv = row
         value_lines.append(
             "  ("
-            + f"{esc_sql(SOLD_AT)}::date, "
+            + f"{esc_sql(sold_at)}::date, "
             + f"{esc_sql(buyer)}, "
             + (esc_sql(seller) if seller else "NULL")
             + ", "
@@ -265,17 +329,17 @@ def main():
     lines.append(",\n".join(value_lines) + ";")
     lines.append("")
 
-    promo_json = json.dumps(promos, ensure_ascii=False, separators=(",", ":"))
-    lines.append(
-        "update public.project_settings ps"
-        "\nset promocional_rows = "
-        + "'" + promo_json.replace("'", "''") + "'::jsonb"
-        + "\nwhere ps.id = (select id from public.project_settings limit 1);"
-    )
+    if had_promos_sheet and promos is not None:
+        promo_json = json.dumps(promos, ensure_ascii=False, separators=(",", ":"))
+        lines.append(
+            "update public.project_settings ps\nset promocional_rows = "
+            + "'" + promo_json.replace("'", "''") + "'::jsonb\nwhere ps.id = (select id from public.project_settings limit 1);"
+        )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"Escrito {out_path} ({len(ventas)} ventas, grupos promo: { {k: len(v) for k, v in promos.items()} }).")
+    extra = f"; promo actualizado: sí ({ {k: len(v) for k, v in promos.items()} })" if had_promos_sheet and promos else "; pestaña Promocionales ausente — promocional_rows no modificado"
+    print(f"Escrito {out_path} ({len(ventas)} ventas{extra}).")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { projectConfig, sales, stockAllocations } from '../data/ventas'
 import { supabase } from './supabase'
 import type { ProjectConfig, Sale, StockAllocation } from '../types'
@@ -31,6 +32,7 @@ type SaleRow = {
   unit_price_ars: number | null
   paid_ars: number
   payment_method: Sale['paymentMethod']
+  transfer_destination?: string | null
   payment_status: Sale['paymentStatus']
   invoice_status: NonNullable<Sale['invoiceStatus']>
   delivered: string | null
@@ -48,6 +50,7 @@ export type SaleUpdateInput = Pick<
   | 'unitPriceArs'
   | 'paidArs'
   | 'paymentMethod'
+  | 'transferDestination'
   | 'paymentStatus'
   | 'invoiceStatus'
   | 'delivered'
@@ -163,6 +166,8 @@ export async function createSale(input: SaleCreateInput): Promise<Sale> {
       unit_price_ars: input.unitPriceArs,
       paid_ars: input.paidArs,
       payment_method: input.paymentMethod,
+      transfer_destination:
+        input.paymentMethod === 'transferencia' ? input.transferDestination : null,
       payment_status: input.paymentStatus,
       invoice_status: input.invoiceStatus ?? 'pendiente',
       delivered: input.delivered,
@@ -229,6 +234,8 @@ export async function updateSale(input: SaleUpdateInput): Promise<Sale> {
       unit_price_ars: input.unitPriceArs,
       paid_ars: input.paidArs,
       payment_method: input.paymentMethod,
+      transfer_destination:
+        input.paymentMethod === 'transferencia' ? input.transferDestination : null,
       payment_status: input.paymentStatus,
       invoice_status: input.invoiceStatus ?? 'pendiente',
       delivered: input.delivered,
@@ -243,6 +250,38 @@ export async function updateSale(input: SaleUpdateInput): Promise<Sale> {
   }
 
   return mapSale(data as SaleRow)
+}
+
+/** PostgREST suele limitar filas por respuesta; paginamos hasta traer todas las ventas. */
+const SALES_FETCH_PAGE_SIZE = 1000
+
+async function fetchAllSalesRows(client: SupabaseClient): Promise<SaleRow[]> {
+  const rows: SaleRow[] = []
+  let from = 0
+
+  for (;;) {
+    const { data, error } = await client
+      .from('sales')
+      .select('*')
+      .order('sheet_position', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true })
+      .range(from, from + SALES_FETCH_PAGE_SIZE - 1)
+
+    if (error) {
+      throw error
+    }
+
+    const batch = (data ?? []) as SaleRow[]
+    rows.push(...batch)
+
+    if (batch.length < SALES_FETCH_PAGE_SIZE) {
+      break
+    }
+
+    from += SALES_FETCH_PAGE_SIZE
+  }
+
+  return rows
 }
 
 export const fallbackVentasData: VentasData = {
@@ -260,14 +299,10 @@ export async function loadVentasData(): Promise<VentasData> {
     }
   }
 
-  const [settingsResponse, allocationsResponse, salesResponse] = await Promise.all([
+  const [settingsResponse, allocationsResponse, saleRows] = await Promise.all([
     supabase.from('project_settings').select('*').limit(1).maybeSingle(),
     supabase.from('stock_allocations').select('name, copies, boxes').order('created_at'),
-    supabase
-      .from('sales')
-      .select('*')
-      .order('sheet_position', { ascending: true, nullsFirst: false })
-      .order('created_at', { ascending: true }),
+    fetchAllSalesRows(supabase),
   ])
 
   if (settingsResponse.error) {
@@ -276,10 +311,6 @@ export async function loadVentasData(): Promise<VentasData> {
 
   if (allocationsResponse.error) {
     throw allocationsResponse.error
-  }
-
-  if (salesResponse.error) {
-    throw salesResponse.error
   }
 
   const settings = settingsResponse.data as ProjectSettingsRow | null
@@ -296,7 +327,7 @@ export async function loadVentasData(): Promise<VentasData> {
     stockAllocations: ((allocationsResponse.data ?? []) as StockAllocationRow[]).map(
       mapStockAllocation,
     ),
-    sales: ((salesResponse.data ?? []) as SaleRow[]).map(mapSale),
+    sales: saleRows.map(mapSale),
     acSchemeSoldUnits,
   }
 }
@@ -339,6 +370,12 @@ function normalizeInvoiceStatus(raw: string | null | undefined): NonNullable<Sal
   return 'pendiente'
 }
 
+function normalizeTransferDestination(raw: string | null | undefined): Sale['transferDestination'] {
+  if (raw === 'Delfi' || raw === 'Mechi') return raw
+
+  return null
+}
+
 function mapSale(row: SaleRow): Sale {
   return {
     id: row.id,
@@ -349,6 +386,7 @@ function mapSale(row: SaleRow): Sale {
     unitPriceArs: row.unit_price_ars === null ? null : Number(row.unit_price_ars),
     paidArs: Number(row.paid_ars),
     paymentMethod: row.payment_method,
+    transferDestination: normalizeTransferDestination(row.transfer_destination),
     paymentStatus: row.payment_status,
     invoiceStatus: normalizeInvoiceStatus(row.invoice_status),
     delivered: row.delivered,
