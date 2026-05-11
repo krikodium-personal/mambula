@@ -871,6 +871,8 @@ function App() {
       {selectedSale && !saleEditSheetOpen ? (
         saleDetailEncargoSummary ? (
           <EncargoSummarySheet
+            deleteSale={handleDeleteSale}
+            deleting={deletingSaleId === selectedSale.id}
             sale={selectedSale}
             onClose={closeSaleDetail}
             onVender={openEncargoVenderSheet}
@@ -2482,14 +2484,20 @@ function SaleRow({
 }
 
 function EncargoSummarySheet({
+  deleteSale,
+  deleting,
   onClose,
   onVender,
   sale,
 }: {
+  deleteSale: (sale: Sale) => void
+  deleting: boolean
   onClose: () => void
   onVender: (sale: Sale) => void
   sale: Sale
 }) {
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+
   return (
     <div className="sheet-backdrop" onClick={onClose}>
       <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
@@ -2547,6 +2555,25 @@ function EncargoSummarySheet({
           <button className="primary-button full" onClick={() => onVender(sale)} type="button">
             Vender
           </button>
+
+          {confirmingDelete ? (
+            <div className="delete-confirmation">
+              <strong>¿Eliminar este encargo?</strong>
+              <p>Se borrará el registro en Supabase. Esta acción no se puede deshacer.</p>
+              <div className="delete-actions">
+                <button className="secondary-button" onClick={() => setConfirmingDelete(false)} type="button">
+                  Cancelar
+                </button>
+                <button className="danger-button" disabled={deleting} onClick={() => void deleteSale(sale)} type="button">
+                  {deleting ? 'Eliminando...' : 'Sí, eliminar'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button className="danger-link-button" onClick={() => setConfirmingDelete(true)} type="button">
+              Eliminar encargo
+            </button>
+          )}
         </div>
       </div>
     </div>
