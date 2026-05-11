@@ -38,23 +38,33 @@ import {
 } from './lib/ventasRepository'
 import type { PartnerGainBreakdown, PartnerSettlement, Sale, SaleTransferDestination, SplitPartnerKey, StockAllocation } from './types'
 
+function compareSaleDateDesc(a: Sale, b: Sale): number {
+  return String(b.date).localeCompare(String(a.date))
+}
+
 /** Alias Mercado Pago para cobros a nombre de Mechi (distinto del alias principal en proyecto). */
 const MECHI_MP_PAYMENT_ALIAS = 'mambula.cancion'
 
 type AppTab = 'home' | 'ventas' | 'encargos' | 'promo' | 'gastos'
+/** UI del modal de venta; se mapea a `paymentStatus` + `paidArs` al guardar. */
+type SalePaymentTier = 'porPagar' | 'parcial' | 'pagado'
 type SaleDraft = {
   buyer: string
   seller: string
   quantity: string
   unitPriceArs: string
-  paidArs: string
+  /** Monto abonado si `paymentTier === 'parcial'`. */
+  partialPaidArs: string
   paymentMethod: Sale['paymentMethod']
   transferDestination: SaleTransferDestination
-  paymentStatus: Sale['paymentStatus']
+  paymentTier: SalePaymentTier
   invoiceStatus: NonNullable<Sale['invoiceStatus']>
   delivered: string
   billingNotes: string
 }
+
+/** Campo a resaltar cuando `edit-error` viene del guardado del borrador de venta. */
+type SaleDraftErrorField = 'buyer' | 'quantity' | 'saleLine' | 'partialPaid' | 'paymentMethod'
 type StockAllocationDraft = Record<string, { copies: string; boxes: string }>
 
 /** Filas de `stock_allocations` que no se muestran en el inventario del Home (se gestionan aparte). */
@@ -264,6 +274,7 @@ function App() {
   const [saleDraft, setSaleDraft] = useState<SaleDraft | null>(null)
   const [savingSaleId, setSavingSaleId] = useState<string | null>(null)
   const [editError, setEditError] = useState<string | null>(null)
+  const [saleDraftErrorField, setSaleDraftErrorField] = useState<SaleDraftErrorField | null>(null)
   const [createDraft, setCreateDraft] = useState<SaleDraft | null>(null)
   const [newSaleSheetVariant, setNewSaleSheetVariant] = useState<'venta' | 'encargo'>('venta')
   const [saleDraftPresentation, setSaleDraftPresentation] = useState<'default' | 'encargoVender'>('default')
@@ -516,12 +527,14 @@ function App() {
     setSaleDraftPresentation('default')
     setEditingSaleId(sale.id)
     setEditError(null)
+    setSaleDraftErrorField(null)
     setSaleDraft(saleToDraft(sale))
   }
 
   function openEncargoVenderSheet(sale: Sale) {
     setCreateDraft(null)
     setEditError(null)
+    setSaleDraftErrorField(null)
     setSelectedSale(sale)
     setSaleDetailEncargoSummary(true)
     setSaleDraftPresentation('encargoVender')
@@ -533,6 +546,7 @@ function App() {
     setEditingSaleId(null)
     setSaleDraft(null)
     setEditError(null)
+    setSaleDraftErrorField(null)
     setSaleDraftPresentation('default')
   }
 
@@ -569,24 +583,28 @@ function App() {
 
     if (!saleDraft.buyer.trim()) {
       setEditError('Completá el nombre del comprador.')
+      setSaleDraftErrorField('buyer')
       return
     }
 
-    const cobradoErr = cobradoPaidValidationError(saleDraft)
-    if (cobradoErr) {
-      setEditError(cobradoErr)
+    const resolvedPayment = draftResolveSalePayment(saleDraft)
+    if (!resolvedPayment.ok) {
+      setEditError(resolvedPayment.error)
+      setSaleDraftErrorField(resolvedPayment.field)
       return
     }
 
-    const cobradoMedioErr = cobradoPaymentMethodValidationError(saleDraft)
-    if (cobradoMedioErr) {
-      setEditError(cobradoMedioErr)
+    const pagadoMedioErr = pagadoPaymentMethodValidationError(saleDraft)
+    if (pagadoMedioErr) {
+      setEditError(pagadoMedioErr)
+      setSaleDraftErrorField('paymentMethod')
       return
     }
 
     const otroMedioErr = otroPaymentMethodValidationError(saleDraft)
     if (otroMedioErr) {
       setEditError(otroMedioErr)
+      setSaleDraftErrorField('paymentMethod')
       return
     }
 
@@ -596,11 +614,11 @@ function App() {
       seller: emptyToNull(saleDraft.seller),
       quantity: parseOptionalNumber(saleDraft.quantity),
       unitPriceArs: parseOptionalNumber(saleDraft.unitPriceArs),
-      paidArs: parseOptionalNumber(saleDraft.paidArs) ?? 0,
+      paidArs: resolvedPayment.paidArs,
       paymentMethod: saleDraft.paymentMethod,
       transferDestination:
         saleDraft.paymentMethod === 'transferencia' ? saleDraft.transferDestination : null,
-      paymentStatus: saleDraft.paymentStatus,
+      paymentStatus: resolvedPayment.paymentStatus,
       invoiceStatus: saleDraft.invoiceStatus,
       delivered: emptyToNull(saleDraft.delivered),
       billingNotes: emptyToNull(saleDraft.billingNotes),
@@ -621,6 +639,7 @@ function App() {
       cancelEditingSale()
     } catch (error) {
       setEditError(error instanceof Error ? error.message : 'No se pudo guardar la venta.')
+      setSaleDraftErrorField(null)
     } finally {
       setSavingSaleId(null)
     }
@@ -628,6 +647,7 @@ function App() {
 
   function handleCreateSale() {
     setEditError(null)
+    setSaleDraftErrorField(null)
     cancelEditingSale()
     setNewSaleSheetVariant(tab === 'encargos' ? 'encargo' : 'venta')
     setCreateDraft(createEmptySaleDraft())
@@ -636,10 +656,9 @@ function App() {
   async function saveNewSale() {
     if (!createDraft) return
 
-    const input = draftToSaleInput(createDraft)
-
-    if (!input.buyer) {
+    if (!createDraft.buyer.trim()) {
       setEditError('Completá el nombre del comprador.')
+      setSaleDraftErrorField('buyer')
       return
     }
 
@@ -647,31 +666,38 @@ function App() {
       const qty = parseOptionalNumber(createDraft.quantity)
       if (qty === null || qty <= 0) {
         setEditError('Completá la cantidad de unidades (mayor a cero).')
+        setSaleDraftErrorField('quantity')
         return
       }
     }
 
-    const cobradoErr = cobradoPaidValidationError(createDraft)
-    if (cobradoErr) {
-      setEditError(cobradoErr)
+    const resolvedPayment = draftResolveSalePayment(createDraft)
+    if (!resolvedPayment.ok) {
+      setEditError(resolvedPayment.error)
+      setSaleDraftErrorField(resolvedPayment.field)
       return
     }
 
-    const cobradoMedioErr = cobradoPaymentMethodValidationError(createDraft)
-    if (cobradoMedioErr) {
-      setEditError(cobradoMedioErr)
+    const pagadoMedioErr = pagadoPaymentMethodValidationError(createDraft)
+    if (pagadoMedioErr) {
+      setEditError(pagadoMedioErr)
+      setSaleDraftErrorField('paymentMethod')
       return
     }
 
     const otroMedioErr = otroPaymentMethodValidationError(createDraft)
     if (otroMedioErr) {
       setEditError(otroMedioErr)
+      setSaleDraftErrorField('paymentMethod')
       return
     }
+
+    const input = draftToSaleInput(createDraft)
 
     try {
       setSavingNewSale(true)
       setEditError(null)
+      setSaleDraftErrorField(null)
       const newSale = await createSale(input)
 
       setVentasData((current) => ({
@@ -684,6 +710,7 @@ function App() {
       setSelectedSale(newSale)
     } catch (error) {
       setEditError(error instanceof Error ? error.message : 'No se pudo crear la venta.')
+      setSaleDraftErrorField(null)
     } finally {
       setSavingNewSale(false)
     }
@@ -868,12 +895,14 @@ function App() {
         <SaleDraftSheet
           draft={createDraft}
           editError={editError}
+          errorField={saleDraftErrorField}
           mode="create"
           submitting={savingNewSale}
           createVariant={newSaleSheetVariant}
           onClose={() => {
             setCreateDraft(null)
             setEditError(null)
+            setSaleDraftErrorField(null)
           }}
           onSubmit={saveNewSale}
           setDraft={setCreateDraft}
@@ -884,6 +913,7 @@ function App() {
         <SaleDraftSheet
           draft={saleDraft}
           editError={editError}
+          errorField={saleDraftErrorField}
           mode="edit"
           presentation={saleDraftPresentation}
           submitting={savingSaleId === editingSaleId}
@@ -1083,10 +1113,7 @@ function CuentasMedioDetailSheet({
   sales: Sale[]
   title: string
 }) {
-  const sorted = useMemo(
-    () => [...sales].sort((a, b) => String(b.date).localeCompare(String(a.date))),
-    [sales],
-  )
+  const sorted = useMemo(() => [...sales].sort(compareSaleDateDesc), [sales])
   const totalArs = useMemo(() => sorted.reduce((sum, sale) => sum + sale.paidArs, 0), [sorted])
   const countLabel = sorted.length === 1 ? '1 venta cobrada' : `${sorted.length} ventas cobradas`
 
@@ -1873,27 +1900,29 @@ function VentasScreen({
   }, [sales, sellerFilter])
 
   const filteredSales = useMemo(() => {
-    return sellerScopedSales.filter((sale) => {
-      let matchesAxis = true
+    return sellerScopedSales
+      .filter((sale) => {
+        let matchesAxis = true
 
-      if (ventasFilterAxis === 'estado') {
-        matchesAxis =
-          filter === 'todas' ||
-          (filter === 'pendiente' && isSalePending(sale)) ||
-          (filter === 'pagados' && getSaleStatus(sale) === 'pagado') ||
-          (filter === 'porEntregar' && !isDelivered(sale)) ||
-          (filter === 'porFacturar' && isInvoicePending(sale))
-      } else {
-        matchesAxis =
-          paidViaFilter !== null &&
-          sale.paymentStatus === 'cobrado' &&
-          sale.paymentMethod === paidViaFilter
-      }
+        if (ventasFilterAxis === 'estado') {
+          matchesAxis =
+            filter === 'todas' ||
+            (filter === 'pendiente' && isSalePending(sale)) ||
+            (filter === 'pagados' && getSaleStatus(sale) === 'pagado') ||
+            (filter === 'porEntregar' && !isDelivered(sale)) ||
+            (filter === 'porFacturar' && isInvoicePending(sale))
+        } else {
+          matchesAxis =
+            paidViaFilter !== null &&
+            sale.paymentStatus === 'cobrado' &&
+            sale.paymentMethod === paidViaFilter
+        }
 
-      const matchesQuery = sale.buyer.toLowerCase().includes(query.toLowerCase())
+        const matchesQuery = sale.buyer.toLowerCase().includes(query.toLowerCase())
 
-      return matchesAxis && matchesQuery
-    })
+        return matchesAxis && matchesQuery
+      })
+      .sort(compareSaleDateDesc)
   }, [filter, paidViaFilter, query, sellerScopedSales, ventasFilterAxis])
 
   const pendingCount = sellerScopedSales.filter(isSalePending).length
@@ -2230,7 +2259,9 @@ function EncargosScreen({
   const filteredSales = useMemo(() => {
     const normalized = query.toLowerCase()
 
-    return sellerScopedSales.filter((sale) => sale.buyer.toLowerCase().includes(normalized))
+    return sellerScopedSales
+      .filter((sale) => sale.buyer.toLowerCase().includes(normalized))
+      .sort(compareSaleDateDesc)
   }, [query, sellerScopedSales])
 
   const pendingEncargosArs = useMemo(() => {
@@ -2248,10 +2279,21 @@ function EncargosScreen({
       <div className="search-box">
         <Icon name="search" />
         <input
+          aria-label="Buscar consumidor"
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Buscar consumidor"
           value={query}
         />
+        {query ? (
+          <button
+            aria-label="Borrar búsqueda"
+            className="search-box-clear"
+            onClick={() => setQuery('')}
+            type="button"
+          >
+            <Icon name="close" />
+          </button>
+        ) : null}
       </div>
 
       <div className="seller-stats">
@@ -2687,6 +2729,7 @@ function SaleDraftSheet({
   createVariant = 'venta',
   draft,
   editError,
+  errorField,
   mode,
   onClose,
   onSubmit,
@@ -2697,6 +2740,7 @@ function SaleDraftSheet({
   createVariant?: 'venta' | 'encargo'
   draft: SaleDraft
   editError: string | null
+  errorField: SaleDraftErrorField | null
   mode: 'create' | 'edit'
   onClose: () => void
   onSubmit: () => void
@@ -2737,6 +2781,17 @@ function SaleDraftSheet({
       ? draft.paymentMethod
       : null
 
+  const lineTotalArs = saleLineTotalArsDraft(draft)
+
+  const highlightBuyer = errorField === 'buyer'
+  const highlightQuantity = errorField === 'quantity' || errorField === 'saleLine'
+  const highlightUnitPriceRow = errorField === 'saleLine'
+  const highlightPartialPaid = errorField === 'partialPaid'
+  const highlightPaymentMethod = errorField === 'paymentMethod'
+
+  const inputCls = (highlight: boolean) =>
+    highlight ? 'new-sale-input new-sale-input--error' : 'new-sale-input'
+
   return (
     <div className="sheet-backdrop" onClick={onClose}>
       <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
@@ -2756,8 +2811,9 @@ function SaleDraftSheet({
                 Comprador
               </span>
               <input
+                aria-invalid={highlightBuyer}
                 aria-labelledby="new-sale-buyer-label"
-                className="new-sale-input"
+                className={inputCls(highlightBuyer)}
                 placeholder="Nombre"
                 value={draft.buyer}
                 onChange={(event) => setDraft({ ...draft, buyer: event.target.value })}
@@ -2791,8 +2847,9 @@ function SaleDraftSheet({
                   Unidades
                 </span>
                 <input
+                  aria-invalid={highlightQuantity}
                   aria-labelledby="new-sale-qty-label"
-                  className="new-sale-input"
+                  className={inputCls(highlightQuantity)}
                   inputMode="numeric"
                   placeholder="0"
                   value={draft.quantity}
@@ -2801,68 +2858,104 @@ function SaleDraftSheet({
               </div>
             ) : (
               <>
-                <div className="new-sale-row2">
-                  <div className="new-sale-field">
-                    <span className="new-sale-field-label" id="new-sale-qty-label-full">
-                      Unidades
-                    </span>
-                    <input
-                      aria-labelledby="new-sale-qty-label-full"
-                      className="new-sale-input"
-                      inputMode="numeric"
-                      placeholder="0"
-                      value={draft.quantity}
-                      onChange={(event) => setDraft({ ...draft, quantity: event.target.value })}
-                    />
-                  </div>
-                  <div className="new-sale-field">
-                    <span className="new-sale-field-label" id="new-sale-paid-label">
-                      Pagado (ARS)
-                    </span>
-                    <input
-                      aria-labelledby="new-sale-paid-label"
-                      className="new-sale-input"
-                      inputMode="numeric"
-                      placeholder="0"
-                      value={draft.paidArs}
-                      onChange={(event) => setDraft({ ...draft, paidArs: event.target.value })}
-                    />
-                  </div>
+                <div className="new-sale-field">
+                  <span className="new-sale-field-label" id="new-sale-qty-label-full">
+                    Unidades
+                  </span>
+                  <input
+                    aria-invalid={highlightQuantity}
+                    aria-labelledby="new-sale-qty-label-full"
+                    className={inputCls(highlightQuantity)}
+                    inputMode="numeric"
+                    placeholder="0"
+                    value={draft.quantity}
+                    onChange={(event) => setDraft({ ...draft, quantity: event.target.value })}
+                  />
                 </div>
 
-                <div className="new-sale-field">
+                <div className={`new-sale-field${highlightUnitPriceRow ? ' new-sale-field--error' : ''}`}>
                   <span className="new-sale-field-label">Precio unitario</span>
                   <Segmented<string>
                     active={unitPriceSegmentActive(draft.unitPriceArs)}
                     onChange={(key) => setDraft({ ...draft, unitPriceArs: unitPriceFromSegmentKey(key) })}
                     options={unitPriceSegmentOptions(draft.unitPriceArs)}
                   />
+                  {lineTotalArs !== null ? (
+                    <span className="new-sale-field-hint">
+                      Total de la venta: {currencyArsFormatter.format(lineTotalArs)}
+                    </span>
+                  ) : null}
                 </div>
 
                 <div className="new-sale-field">
+                  <span className="new-sale-field-label">Pago</span>
+                  <Segmented<SalePaymentTier>
+                    active={draft.paymentTier}
+                    onChange={(paymentTier) =>
+                      setDraft({
+                        ...draft,
+                        partialPaidArs: paymentTier === 'parcial' ? draft.partialPaidArs : '',
+                        paymentMethod:
+                          paymentTier !== 'pagado' ? null : draft.paymentMethod ?? 'transferencia',
+                        paymentTier,
+                      })
+                    }
+                    options={[
+                      { key: 'porPagar', label: 'Por pagar' },
+                      { key: 'parcial', label: 'Parcial' },
+                      { key: 'pagado', label: 'Pagado' },
+                    ]}
+                  />
+                </div>
+
+                {draft.paymentTier === 'parcial' ? (
+                  <div className="new-sale-field">
+                    <span className="new-sale-field-label" id="new-sale-partial-paid-label">
+                      Pagado:
+                    </span>
+                    <input
+                      aria-invalid={highlightPartialPaid}
+                      aria-labelledby="new-sale-partial-paid-label"
+                      className={inputCls(highlightPartialPaid)}
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={draft.partialPaidArs}
+                      onChange={(event) => setDraft({ ...draft, partialPaidArs: event.target.value })}
+                    />
+                    {lineTotalArs !== null ? (
+                      <span className="new-sale-field-hint">
+                        Menor que {currencyArsFormatter.format(lineTotalArs)}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div className={`new-sale-field${highlightPaymentMethod ? ' new-sale-field--error' : ''}`}>
                   <span className="new-sale-field-label">Medio de pago</span>
                   <span className="new-sale-field-hint">
-                    {draft.paymentStatus === 'pendiente'
-                      ? 'Opcional si la venta está por pagar.'
-                      : 'Obligatorio si está cobrado.'}
+                    {draft.paymentTier === 'pagado'
+                      ? 'Obligatorio cuando la venta está pagada.'
+                      : 'Opcional si la venta no está totalmente pagada.'}
                   </span>
                   <Segmented<'transferencia' | 'efectivo'>
                     active={paymentMethodSegmentActive}
-                    onChange={(paymentMethod) => setDraft({ ...draft, paymentMethod })}
+                    onChange={(paymentMethod) => {
+                      if (
+                        draft.paymentTier !== 'pagado' &&
+                        (draft.paymentMethod === 'transferencia' ||
+                          draft.paymentMethod === 'efectivo') &&
+                        draft.paymentMethod === paymentMethod
+                      ) {
+                        setDraft({ ...draft, paymentMethod: null })
+                        return
+                      }
+                      setDraft({ ...draft, paymentMethod })
+                    }}
                     options={[
                       { key: 'transferencia', label: 'Transferencia' },
                       { key: 'efectivo', label: 'Efectivo' },
                     ]}
                   />
-                  {draft.paymentStatus === 'pendiente' ? (
-                    <button
-                      className="new-sale-clear-medio"
-                      onClick={() => setDraft({ ...draft, paymentMethod: null })}
-                      type="button"
-                    >
-                      Sin medio de pago
-                    </button>
-                  ) : null}
                 </div>
 
                 {draft.paymentMethod === 'transferencia' ? (
@@ -2880,23 +2973,6 @@ function SaleDraftSheet({
                     />
                   </div>
                 ) : null}
-
-                <div className="new-sale-field">
-                  <span className="new-sale-field-label">Pago</span>
-                  <Segmented<Sale['paymentStatus']>
-                    active={draft.paymentStatus}
-                    onChange={(paymentStatus) =>
-                      setDraft({
-                        ...draft,
-                        paymentStatus,
-                      })
-                    }
-                    options={[
-                      { key: 'pendiente', label: 'Por pagar' },
-                      { key: 'cobrado', label: 'Cobrado' },
-                    ]}
-                  />
-                </div>
 
                 <div className="new-sale-field">
                   <span className="new-sale-field-label">Facturación</span>
@@ -4255,16 +4331,85 @@ function getPathForTab(tab: AppTab) {
   return route ? `${base}${route}` : base
 }
 
+function salePaymentTierFromSale(sale: Sale): SalePaymentTier {
+  if (sale.paymentStatus === 'cobrado') return 'pagado'
+
+  const q = sale.quantity ?? 0
+  const pu = sale.unitPriceArs ?? 0
+  const total = q * pu
+  if (sale.paidArs <= 0) return 'porPagar'
+  if (total > 0 && sale.paidArs >= total) return 'pagado'
+
+  return 'parcial'
+}
+
+function saleLineTotalArsDraft(draft: SaleDraft): number | null {
+  const q = parseOptionalNumber(draft.quantity)
+  const p = parseOptionalNumber(draft.unitPriceArs)
+  if (q === null || p === null || q <= 0 || p <= 0) return null
+
+  return q * p
+}
+
+function draftResolveSalePayment(
+  draft: SaleDraft,
+):
+  | { ok: true; paidArs: number; paymentStatus: Sale['paymentStatus'] }
+  | { ok: false; error: string; field: SaleDraftErrorField } {
+  if (draft.paymentTier === 'porPagar') {
+    return { ok: true, paidArs: 0, paymentStatus: 'pendiente' }
+  }
+
+  const total = saleLineTotalArsDraft(draft)
+
+  if (draft.paymentTier === 'parcial') {
+    if (total === null || total <= 0) {
+      return {
+        ok: false,
+        error: 'Completá unidades y precio unitario para registrar un pago parcial.',
+        field: 'saleLine',
+      }
+    }
+
+    const part = parseOptionalNumber(draft.partialPaidArs)
+    if (part === null || part <= 0) {
+      return { ok: false, error: 'Ingresa el monto del pago parcial', field: 'partialPaid' }
+    }
+
+    if (part >= total) {
+      return {
+        ok: false,
+        error: 'El monto parcial tiene que ser menor al total de la venta.',
+        field: 'partialPaid',
+      }
+    }
+
+    return { ok: true, paidArs: part, paymentStatus: 'pendiente' }
+  }
+
+  if (total === null || total <= 0) {
+    return {
+      ok: false,
+      error: 'Completá unidades y precio unitario para marcar como pagada.',
+      field: 'saleLine',
+    }
+  }
+
+  return { ok: true, paidArs: total, paymentStatus: 'cobrado' }
+}
+
 function saleToDraft(sale: Sale): SaleDraft {
+  const tier = salePaymentTierFromSale(sale)
+
   return {
     buyer: sale.buyer,
     seller: sale.seller ?? '',
     quantity: sale.quantity?.toString() ?? '',
     unitPriceArs: sale.unitPriceArs?.toString() ?? '',
-    paidArs: sale.paidArs.toString(),
+    partialPaidArs: tier === 'parcial' ? sale.paidArs.toString() : '',
     paymentMethod: sale.paymentMethod,
     transferDestination: sale.transferDestination ?? 'Delfi',
-    paymentStatus: sale.paymentStatus,
+    paymentTier: tier,
     invoiceStatus: sale.invoiceStatus ?? 'pendiente',
     delivered: sale.delivered ?? '',
     billingNotes: sale.billingNotes ?? '',
@@ -4277,10 +4422,10 @@ function createEmptySaleDraft(): SaleDraft {
     seller: 'Delfi',
     quantity: '',
     unitPriceArs: '15000',
-    paidArs: '',
+    partialPaidArs: '',
     paymentMethod: null,
     transferDestination: 'Delfi',
-    paymentStatus: 'pendiente',
+    paymentTier: 'porPagar',
     invoiceStatus: 'pendiente',
     delivered: 'NO',
     billingNotes: '',
@@ -4318,27 +4463,11 @@ function createStockAllocationDraft(allocations: StockAllocation[]): StockAlloca
   }, {})
 }
 
-function cobradoPaidValidationError(draft: SaleDraft): string | null {
-  if (draft.paymentStatus !== 'cobrado') return null
-
-  const trimmed = draft.paidArs.trim()
-  if (trimmed === '') {
-    return 'Si elegís Cobrado, completá el monto en Pagado (ARS).'
-  }
-
-  const paid = parseOptionalNumber(draft.paidArs)
-  if (paid === null || paid <= 0) {
-    return 'Si elegís Cobrado, ingresá un monto válido mayor a cero en Pagado (ARS).'
-  }
-
-  return null
-}
-
-function cobradoPaymentMethodValidationError(draft: SaleDraft): string | null {
-  if (draft.paymentStatus !== 'cobrado') return null
+function pagadoPaymentMethodValidationError(draft: SaleDraft): string | null {
+  if (draft.paymentTier !== 'pagado') return null
 
   if (draft.paymentMethod !== 'transferencia' && draft.paymentMethod !== 'efectivo') {
-    return 'Si elegís Cobrado, seleccioná Transferencia o Efectivo como medio de pago.'
+    return 'Si la venta está pagada, seleccioná Transferencia o Efectivo como medio de pago.'
   }
 
   return null
@@ -4347,22 +4476,27 @@ function cobradoPaymentMethodValidationError(draft: SaleDraft): string | null {
 /** Ya no se ofrece «Otro» en el formulario; al cobrar hay que migrar ventas viejas. */
 function otroPaymentMethodValidationError(draft: SaleDraft): string | null {
   if (draft.paymentMethod !== 'otro') return null
-  if (draft.paymentStatus !== 'cobrado') return null
+  if (draft.paymentTier !== 'pagado') return null
 
   return 'Elegí Transferencia o Efectivo como medio de pago antes de guardar.'
 }
 
 function draftToSaleInput(draft: SaleDraft): SaleCreateInput {
+  const resolved = draftResolveSalePayment(draft)
+  if (!resolved.ok) {
+    throw new Error(resolved.error)
+  }
+
   return {
     buyer: draft.buyer.trim(),
     seller: emptyToNull(draft.seller),
     quantity: parseOptionalNumber(draft.quantity),
     unitPriceArs: parseOptionalNumber(draft.unitPriceArs),
-    paidArs: parseOptionalNumber(draft.paidArs) ?? 0,
+    paidArs: resolved.paidArs,
     paymentMethod: draft.paymentMethod,
     transferDestination:
       draft.paymentMethod === 'transferencia' ? draft.transferDestination : null,
-    paymentStatus: draft.paymentStatus,
+    paymentStatus: resolved.paymentStatus,
     invoiceStatus: draft.invoiceStatus,
     delivered: emptyToNull(draft.delivered),
     billingNotes: emptyToNull(draft.billingNotes),
