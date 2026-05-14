@@ -14,7 +14,7 @@ Mapeo de columnas (encabezados, sin distinguir mayúsculas / espacios laterales)
   Facturado → invoice_status (SI → facturado; vacío → pendiente)
   Notas → billing_notes
 
-payment_method / payment_status se infieren como antes (notas + monto vs total).
+payment_method / payment_status se infieren como antes (notas + monto vs total; parcial si hay pago sin cerrar).
 
 Uso:
   python3 scripts/generate_sync_from_excel.py "/ruta/archivo.xlsx" [ruta_salida.sql] [sold_at YYYY-MM-DD]
@@ -195,7 +195,7 @@ def parse_ventas(ws) -> list[tuple]:
         if total_calc > 0 and paid_raw >= total_calc:
             pay_stat = "cobrado"
         elif paid_raw > 0:
-            pay_stat = "pendiente"
+            pay_stat = "parcial"
         else:
             pay_stat = "pendiente"
 

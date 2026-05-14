@@ -28,13 +28,22 @@ export function promoDeliveredUnitsForStockRow(rows: PromoRowsStored, rowName: s
   return promoDeliveredUnitsForSocia(rows, rowName)
 }
 
+/** Unidades de venta como entero ≥ 0 (coerce seguro para datos legacy). */
+export function saleQuantityFloor(sale: Pick<Sale, 'quantity'>): number {
+  const raw = sale.quantity
+  if (raw == null) return 0
+
+  const n = typeof raw === 'number' ? raw : Number(String(raw).trim())
+  if (!Number.isFinite(n)) return 0
+
+  return Math.max(0, Math.floor(n))
+}
+
 export function soldUnitsAttributedToSeller(sales: Sale[], sellerName: string): number {
+  const target = sellerName.trim()
   return sales.reduce((sum, sale) => {
-    if (sale.seller === sellerName && sale.quantity != null && Number.isFinite(sale.quantity)) {
-      const q = Math.max(0, Math.floor(sale.quantity))
-      return sum + q
-    }
-    return sum
+    if (sale.seller?.trim() !== target) return sum
+    return sum + saleQuantityFloor(sale)
   }, 0)
 }
 

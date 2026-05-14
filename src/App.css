@@ -649,6 +649,29 @@ button.stat-card.stat-card--clickable {
   padding: 5px 10px;
 }
 
+.inventory-print-summary-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.inventory-print-summary-row .soft-pill {
+  margin-bottom: 0;
+}
+
+.inventory-stock-remainder-total {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.inventory-stock-remainder-total strong {
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
 .inventory-table {
   margin: 0 -16px -8px;
 }

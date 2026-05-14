@@ -398,10 +398,10 @@ function App() {
   const salesPaidArsTotal = useMemo(() => sales.reduce((sum, sale) => sum + sale.paidArs, 0), [sales])
 
   const ventasTabSales = useMemo(() => sales.filter((sale) => !isEncargoSale(sale)), [sales])
-  const ventasTabSoldCopies = useMemo(
-    () => ventasTabSales.reduce((total, sale) => total + (sale.quantity ?? 0), 0),
-    [ventasTabSales],
-  )
+  const ventasTabSoldCopies = useMemo(() => {
+    const rows = allocationsForHomeInventoryTable(stockAllocations)
+    return rows.reduce((total, row) => total + soldUnitsAttributedToSeller(ventasTabSales, row.name), 0)
+  }, [stockAllocations, ventasTabSales])
   const encargoSales = useMemo(() => sales.filter(isEncargoSale), [sales])
   const ventasTabPaidArs = ventasTabSales.reduce((total, sale) => total + sale.paidArs, 0)
   const ventasTabPendingArs = useMemo(
@@ -827,6 +827,7 @@ function App() {
           mechiCopyStatus={mechiCopyStatus}
           expenses={expenses}
           ventasHeroTotalVendidoArs={ventasHeroTotalVendidoArs}
+          ventasLiquidacionCobradoArs={ventasTabPaidArs}
           ventasLiquidacionesEjemplares={ventasTabSoldCopies}
           salesPaidArsTotal={salesPaidArsTotal}
           loadError={loadError}
@@ -1188,6 +1189,7 @@ function HomeScreen({
   copyStatus,
   expenses,
   ventasHeroTotalVendidoArs,
+  ventasLiquidacionCobradoArs,
   ventasLiquidacionesEjemplares,
   loadError,
   loading,
@@ -1216,7 +1218,9 @@ function HomeScreen({
   copyStatus: 'idle' | 'copied' | 'error'
   expenses: Expense[]
   ventasHeroTotalVendidoArs: number
-  /** Ejemplares en ventas principales (sin encargos); base para Wonky en liquidación Ventas Mambula. */
+  /** Suma `paidArs` en ventas principales (sin encargos); solo para el hero de liquidación. */
+  ventasLiquidacionCobradoArs: number
+  /** Ejemplares vendidos atribuidos a destinos del inventario Home (sin encargos); coincide con la suma de «vendidos» en la tabla. Base Wonky en liquidación Ventas Mambula. */
   ventasLiquidacionesEjemplares: number
   loadError: string | null
   loading: boolean
@@ -1250,6 +1254,10 @@ function HomeScreen({
     const otherRows = rows.filter((row) => row.name !== AC_STOCK_NAME)
     return [...otherRows, ...acRows]
   }, [stockAllocations])
+  const ventasPrincipalesSales = useMemo(
+    () => sales.filter((sale) => !isEncargoSale(sale)),
+    [sales],
+  )
   const [stockDraft, setStockDraft] = useState<StockAllocationDraft>(() => {
     return createStockAllocationDraft(allocationsForHomeInventoryTable(stockAllocations))
   })
@@ -1257,6 +1265,24 @@ function HomeScreen({
   const [cuentasMedioSheet, setCuentasMedioSheet] = useState<{ title: string; sales: Sale[] } | null>(null)
   const availableCopies = projectConfig.firstPrintRun.copies - soldCopies
   const copiesPerBox = projectConfig.firstPrintRun.copies / projectConfig.firstPrintRun.boxes
+  /** Cajas no asignadas a destinos del Home (mismas filas que la tabla; sin Promocionales). Ejemplares = cajas × libros/caja. */
+  const homeInventoryUnassignedStock = useMemo(() => {
+    const sumAllocatedBoxes = inventoryTableRows.reduce((sum, item) => {
+      const boxes = editingInventory
+        ? parseStockNumber(stockDraft[item.name]?.boxes)
+        : item.boxes
+      return sum + boxes
+    }, 0)
+    const remainingBoxes = projectConfig.firstPrintRun.boxes - sumAllocatedBoxes
+    const remainingCopies = remainingBoxes * copiesPerBox
+    return { remainingBoxes, remainingCopies }
+  }, [
+    copiesPerBox,
+    editingInventory,
+    inventoryTableRows,
+    projectConfig.firstPrintRun.boxes,
+    stockDraft,
+  ])
   const inventoryError = localStockError ?? stockAllocationError
   const acSliderMax = Math.max(0, abrSplit.acCopies)
   const sliderValue = Math.min(Math.max(0, acSchemeSoldQty), acSliderMax)
@@ -1560,10 +1586,19 @@ function HomeScreen({
               </button>
             )}
           </div>
-          <span className="soft-pill">
-            {numberFormatter.format(projectConfig.firstPrintRun.copies)} libros ·{' '}
-            {numberFormatter.format(projectConfig.firstPrintRun.boxes)} cajas
-          </span>
+          <div className="inventory-print-summary-row">
+            <span className="soft-pill">
+              {numberFormatter.format(projectConfig.firstPrintRun.copies)} libros ·{' '}
+              {numberFormatter.format(projectConfig.firstPrintRun.boxes)} cajas
+            </span>
+            <span className="muted-label inventory-stock-remainder-total">
+              Stock sin asignar{' '}
+              <strong>
+                {numberFormatter.format(homeInventoryUnassignedStock.remainingBoxes)} cajas ·{' '}
+                {numberFormatter.format(homeInventoryUnassignedStock.remainingCopies)} ejemplares
+              </strong>
+            </span>
+          </div>
           {inventoryError ? <p className="edit-error inventory-error">{inventoryError}</p> : null}
           <div className="inventory-table">
             <div className="inventory-head">
@@ -1577,7 +1612,7 @@ function HomeScreen({
                 : item.copies
 
               const promoUnits = promoDeliveredUnitsForStockRow(promoRows, item.name)
-              const soldUnits = soldUnitsAttributedToSeller(sales, item.name)
+              const soldUnits = soldUnitsAttributedToSeller(ventasPrincipalesSales, item.name)
               const movement = breakdownInventoryMovement(allocationCopies, promoUnits, soldUnits, item.name)
               const isSociaRow = item.name === 'Delfi' || item.name === 'Mechi' || item.name === 'Susan'
 
@@ -1766,11 +1801,13 @@ function HomeScreen({
         <LiquidacionesVentasCard
           explainDetail={
             <>
-              El total principal coincide con la pestaña Ventas (cobrado + pendiente por venta, sin encargos). Wonky
-              retiene {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY)} por cada ejemplar de esas ventas (
+              El importe destacado arriba es el <strong>total cobrado</strong> (suma de pagos registrados en ventas
+              principales, sin encargos). Para repartir ganancias, el total que importa es el de la pestaña Ventas (
+              cobrado + pendiente por venta, sin encargos). Wonky retiene{' '}
+              {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY)} por cada ejemplar de esas ventas (
               {numberFormatter.format(ventasLiquidacionesEjemplares)} u. →{' '}
-              {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY * ventasLiquidacionesEjemplares)}). Cada socia (Delfi, Mechi,
-              Susan) suma{' '}
+              {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY * ventasLiquidacionesEjemplares)}). Cada socia (Delfi,
+              Mechi, Susan) suma{' '}
               <strong>
                 (total Ventas − parte Wonky) / 3 = (
                 {currencyArsFormatter.format(ventasHeroTotalVendidoArs)} −{' '}
@@ -1789,7 +1826,7 @@ function HomeScreen({
           }}
           onToggleExplain={() => setVentasMambulaNoteOpen((open) => !open)}
           participantes={liquidacionesParticipantes}
-          totalBruto={ventasHeroTotalVendidoArs}
+          totalCobradoArs={ventasLiquidacionCobradoArs}
           totalEjemplares={ventasLiquidacionesEjemplares}
           wonkyPorLibroArs={WONKY_ARS_PER_VENTA_COPY}
         />
@@ -4255,6 +4292,9 @@ function isSalePending(sale: Sale) {
 }
 
 function getSaleStatus(sale: Sale): 'pagado' | 'parcial' | 'pendiente' {
+  if (sale.paymentStatus === 'cobrado') return 'pagado'
+  if (sale.paymentStatus === 'parcial') return 'parcial'
+
   if (sale.quantity === null || sale.unitPriceArs === null) return 'pendiente'
 
   const pending = getSalePending(sale)
@@ -4360,6 +4400,7 @@ function getPathForTab(tab: AppTab) {
 
 function salePaymentTierFromSale(sale: Sale): SalePaymentTier {
   if (sale.paymentStatus === 'cobrado') return 'pagado'
+  if (sale.paymentStatus === 'parcial') return 'parcial'
 
   const q = sale.quantity ?? 0
   const pu = sale.unitPriceArs ?? 0
@@ -4411,7 +4452,7 @@ function draftResolveSalePayment(
       }
     }
 
-    return { ok: true, paidArs: part, paymentStatus: 'pendiente' }
+    return { ok: true, paidArs: part, paymentStatus: 'parcial' }
   }
 
   if (total === null || total <= 0) {

@@ -33,11 +33,11 @@ export type Sale = {
   quantity: number | null
   unitPriceArs: number | null
   paidArs: number
-  /** Null = sin medio definido (válido si `paymentStatus === 'pendiente'`). */
+  /** Null = sin medio definido (válido si el cobro no está completo: pendiente o parcial). */
   paymentMethod: 'transferencia' | 'efectivo' | 'otro' | null
   /** Solo si `paymentMethod === 'transferencia'`; ventas viejas pueden tener null. */
   transferDestination: SaleTransferDestination | null
-  paymentStatus: 'pendiente' | 'cobrado'
+  paymentStatus: 'pendiente' | 'parcial' | 'cobrado'
   invoiceStatus?: 'facturado' | 'pendiente' | 'no_aplica'
   delivered?: string | null
   billingNotes?: string | null

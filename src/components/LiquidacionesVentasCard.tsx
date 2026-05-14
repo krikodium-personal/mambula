@@ -30,7 +30,7 @@ function Avatar({ name }: { name: string }) {
 
 type LiquidacionesVentasCardProps = {
   participantes: LiquidacionParticipanteVM[]
-  totalBruto: number
+  totalCobradoArs: number
   totalEjemplares: number
   wonkyPorLibroArs: number
   formatArs: (value: number) => string
@@ -42,7 +42,7 @@ type LiquidacionesVentasCardProps = {
 
 export default function LiquidacionesVentasCard({
   participantes,
-  totalBruto,
+  totalCobradoArs,
   totalEjemplares,
   wonkyPorLibroArs,
   formatArs,
@@ -79,7 +79,8 @@ export default function LiquidacionesVentasCard({
         ) : (
           <div className="liquidaciones-ventas-subtitle-row">
             <span className="liquidaciones-ventas-subtitle-text">
-              Total como en Ventas (cobrado + pendiente, sin encargos). Cada socia: (total − Wonky) / 3, con Wonky ={' '}
+              Importe destacado: total cobrado (ventas principales, sin encargos). Liquidación por socia sobre el total
+              Ventas (cobrado + pendiente, sin encargos): cada socia (total − Wonky) / 3, con Wonky ={' '}
               {formatArs(wonkyPorLibroArs)} por ejemplar vendido en esas ventas.
             </span>
             <button
@@ -98,8 +99,8 @@ export default function LiquidacionesVentasCard({
         <div className="liquidaciones-ventas-hero">
           <div className="liquidaciones-ventas-hero-top">
             <div>
-              <div className="liquidaciones-ventas-hero-label">Total vendido</div>
-              <div className="liquidaciones-ventas-hero-bruto">{formatArs(totalBruto)}</div>
+              <div className="liquidaciones-ventas-hero-label">Total cobrado</div>
+              <div className="liquidaciones-ventas-hero-bruto">{formatArs(totalCobradoArs)}</div>
             </div>
             <div className="liquidaciones-ventas-hero-meta">
               {totalEjemplares} ejemplares
@@ -123,9 +124,9 @@ export default function LiquidacionesVentasCard({
               <div className="liquidaciones-ventas-progress-legend-right">
                 <div className="liquidaciones-ventas-legend-row liquidaciones-ventas-legend-row-end">
                   <span className="liquidaciones-ventas-dot liquidaciones-ventas-dot--muted" />
-                  <span className="liquidaciones-ventas-legend-label">Total vendido</span>
+                  <span className="liquidaciones-ventas-legend-label">Total cobrado</span>
                 </div>
-                <div className="liquidaciones-ventas-legend-value">{formatArs(totalBruto)}</div>
+                <div className="liquidaciones-ventas-legend-value">{formatArs(totalCobradoArs)}</div>
               </div>
             </div>
           </div>
