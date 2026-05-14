@@ -79,9 +79,9 @@ export default function LiquidacionesVentasCard({
         ) : (
           <div className="liquidaciones-ventas-subtitle-row">
             <span className="liquidaciones-ventas-subtitle-text">
-              Importe destacado: total cobrado (ventas principales, sin encargos). Liquidación por socia sobre el total
-              Ventas (cobrado + pendiente, sin encargos): cada socia (total − Wonky) / 3, con Wonky ={' '}
-              {formatArs(wonkyPorLibroArs)} por ejemplar vendido en esas ventas.
+              Solo ventas <strong>cobradas</strong> y <strong>parciales</strong> (sin encargos). Total destacado: monto
+              íntegro en cobradas + pagos registrados en parciales. Ejemplares de esas mismas ventas. Reparto: cada socia
+              (total − Wonky) / 3, Wonky = {formatArs(wonkyPorLibroArs)} por ejemplar.
             </span>
             <button
               aria-expanded={false}

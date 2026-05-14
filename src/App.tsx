@@ -5,6 +5,7 @@ import {
   computeAbrInventorySplit,
   computeVentasMambulaSplits,
   estimateArsPerUsdFromExpenseRates,
+  liquidacionVentasRevenueArs,
   settlementsTotalForPartner,
   AC_STOCK_NAME,
   WONKY_ARS_PER_VENTA_COPY,
@@ -16,6 +17,7 @@ import ProfitCard from './components/ProfitCard'
 import {
   breakdownInventoryMovement,
   promoDeliveredUnitsForStockRow,
+  saleQuantityFloor,
   soldUnitsAttributedToSeller,
   type InventoryMovementBreakdown,
 } from './lib/inventoryProgress'
@@ -398,18 +400,32 @@ function App() {
   const salesPaidArsTotal = useMemo(() => sales.reduce((sum, sale) => sum + sale.paidArs, 0), [sales])
 
   const ventasTabSales = useMemo(() => sales.filter((sale) => !isEncargoSale(sale)), [sales])
-  const ventasTabSoldCopies = useMemo(() => {
-    const rows = allocationsForHomeInventoryTable(stockAllocations)
-    return rows.reduce((total, row) => total + soldUnitsAttributedToSeller(ventasTabSales, row.name), 0)
-  }, [stockAllocations, ventasTabSales])
+
+  const ventasLiquidacionScopedSales = useMemo(
+    () =>
+      ventasTabSales.filter(
+        (s) => s.paymentStatus === 'cobrado' || s.paymentStatus === 'parcial',
+      ),
+    [ventasTabSales],
+  )
+
+  const ventasLiquidacionTotalArs = useMemo(
+    () =>
+      ventasLiquidacionScopedSales.reduce((sum, s) => sum + liquidacionVentasRevenueArs(s), 0),
+    [ventasLiquidacionScopedSales],
+  )
+
+  const ventasLiquidacionEjemplares = useMemo(
+    () => ventasLiquidacionScopedSales.reduce((sum, s) => sum + saleQuantityFloor(s), 0),
+    [ventasLiquidacionScopedSales],
+  )
+
   const encargoSales = useMemo(() => sales.filter(isEncargoSale), [sales])
   const ventasTabPaidArs = ventasTabSales.reduce((total, sale) => total + sale.paidArs, 0)
   const ventasTabPendingArs = useMemo(
     () => ventasTabSales.reduce((sum, sale) => sum + Math.max(0, getSalePending(sale)), 0),
     [ventasTabSales],
   )
-  /** Igual que «Total vendido» en la pestaña Ventas (no incluye encargos). */
-  const ventasHeroTotalVendidoArs = ventasTabPaidArs + ventasTabPendingArs
 
   const abrSplit = useMemo(
     () => computeAbrInventorySplit(stockAllocations, projectConfig.costRules),
@@ -480,8 +496,8 @@ function App() {
   )
 
   const partnerGainRows = useMemo(
-    () => computeVentasMambulaSplits(ventasHeroTotalVendidoArs, ventasTabSoldCopies),
-    [ventasHeroTotalVendidoArs, ventasTabSoldCopies],
+    () => computeVentasMambulaSplits(ventasLiquidacionTotalArs, ventasLiquidacionEjemplares),
+    [ventasLiquidacionTotalArs, ventasLiquidacionEjemplares],
   )
 
   async function savePartnerSettlement(input: {
@@ -826,9 +842,8 @@ function App() {
           copyStatus={copyStatus}
           mechiCopyStatus={mechiCopyStatus}
           expenses={expenses}
-          ventasHeroTotalVendidoArs={ventasHeroTotalVendidoArs}
-          ventasLiquidacionCobradoArs={ventasTabPaidArs}
-          ventasLiquidacionesEjemplares={ventasTabSoldCopies}
+          ventasLiquidacionCobradoArs={ventasLiquidacionTotalArs}
+          ventasLiquidacionesEjemplares={ventasLiquidacionEjemplares}
           salesPaidArsTotal={salesPaidArsTotal}
           loadError={loadError}
           loading={loading}
@@ -1188,7 +1203,6 @@ function HomeScreen({
   copyPaymentAlias,
   copyStatus,
   expenses,
-  ventasHeroTotalVendidoArs,
   ventasLiquidacionCobradoArs,
   ventasLiquidacionesEjemplares,
   loadError,
@@ -1217,10 +1231,9 @@ function HomeScreen({
   copyPaymentAlias: () => void
   copyStatus: 'idle' | 'copied' | 'error'
   expenses: Expense[]
-  ventasHeroTotalVendidoArs: number
-  /** Suma `paidArs` en ventas principales (sin encargos); solo para el hero de liquidación. */
+  /** Base ARS liquidación Ventas Mambula: líneas `cobrado` al total de venta + `parcial` según `paidArs` (sin encargos). */
   ventasLiquidacionCobradoArs: number
-  /** Ejemplares vendidos atribuidos a destinos del inventario Home (sin encargos); coincide con la suma de «vendidos» en la tabla. Base Wonky en liquidación Ventas Mambula. */
+  /** Ejemplares en esas mismas ventas (`cobrado` + `parcial`); base Wonky en liquidación. */
   ventasLiquidacionesEjemplares: number
   loadError: string | null
   loading: boolean
@@ -1396,11 +1409,15 @@ function HomeScreen({
   }
 
   async function saveEditingInventory() {
-    const nextAllocations = inventoryTableRows.map((allocation) => ({
-      name: allocation.name,
-      copies: parseStockNumber(stockDraft[allocation.name]?.copies),
-      boxes: parseStockNumber(stockDraft[allocation.name]?.boxes),
-    }))
+    const nextAllocations = inventoryTableRows.map((allocation) => {
+      const boxes = parseStockNumber(stockDraft[allocation.name]?.boxes)
+
+      return {
+        name: allocation.name,
+        copies: inventoryCopiesFromBoxes(stockDraft[allocation.name]?.boxes, copiesPerBox),
+        boxes,
+      }
+    })
     const copiesTotal = nextAllocations.reduce((total, item) => total + item.copies, 0)
     const boxesTotal = nextAllocations.reduce((total, item) => total + item.boxes, 0)
 
@@ -1608,8 +1625,8 @@ function HomeScreen({
             </div>
             {inventoryTableRows.map((item) => {
               const allocationCopies = editingInventory
-                ? parseStockNumber(stockDraft[item.name]?.copies)
-                : item.copies
+                ? inventoryCopiesFromBoxes(stockDraft[item.name]?.boxes, copiesPerBox)
+                : inventoryCopiesFromBoxes(String(item.boxes), copiesPerBox)
 
               const promoUnits = promoDeliveredUnitsForStockRow(promoRows, item.name)
               const soldUnits = soldUnitsAttributedToSeller(ventasPrincipalesSales, item.name)
@@ -1622,32 +1639,38 @@ function HomeScreen({
                     <span>{item.name}</span>
                     {editingInventory ? (
                       <>
-                        <input
-                          inputMode="numeric"
-                          value={stockDraft[item.name]?.copies ?? ''}
-                          onChange={(event) => setStockDraft({
-                            ...stockDraft,
-                            [item.name]: {
-                              copies: event.target.value,
-                              boxes: stockDraft[item.name]?.boxes ?? '',
-                            },
-                          })}
-                        />
+                        <span
+                          className="inventory-ejemplares-derived"
+                          title={`${numberFormatter.format(copiesPerBox)} ejemplares por caja`}
+                        >
+                          {numberFormatter.format(
+                            inventoryCopiesFromBoxes(stockDraft[item.name]?.boxes, copiesPerBox),
+                          )}
+                        </span>
                         <input
                           inputMode="numeric"
                           value={stockDraft[item.name]?.boxes ?? ''}
-                          onChange={(event) => setStockDraft({
-                            ...stockDraft,
-                            [item.name]: {
-                              copies: stockDraft[item.name]?.copies ?? '',
-                              boxes: event.target.value,
-                            },
-                          })}
+                          onChange={(event) => {
+                            const boxes = event.target.value
+                            const copiesN = inventoryCopiesFromBoxes(boxes, copiesPerBox)
+
+                            setStockDraft({
+                              ...stockDraft,
+                              [item.name]: {
+                                copies: copiesN.toString(),
+                                boxes,
+                              },
+                            })
+                          }}
                         />
                       </>
                     ) : (
                       <>
-                        <span>{numberFormatter.format(item.copies)}</span>
+                        <span>
+                          {numberFormatter.format(
+                            inventoryCopiesFromBoxes(String(item.boxes), copiesPerBox),
+                          )}
+                        </span>
                         <span>{numberFormatter.format(item.boxes)}</span>
                       </>
                     )}
@@ -1801,16 +1824,16 @@ function HomeScreen({
         <LiquidacionesVentasCard
           explainDetail={
             <>
-              El importe destacado arriba es el <strong>total cobrado</strong> (suma de pagos registrados en ventas
-              principales, sin encargos). Para repartir ganancias, el total que importa es el de la pestaña Ventas (
-              cobrado + pendiente por venta, sin encargos). Wonky retiene{' '}
+              Solo cuentan ventas principales con estado <strong>cobrado</strong> o <strong>parcial</strong> (sin
+              encargos). El importe destacado suma el <strong>total de la venta</strong> en cobradas y el{' '}
+              <strong>monto ya abonado</strong> en parciales. Wonky retiene{' '}
               {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY)} por cada ejemplar de esas ventas (
               {numberFormatter.format(ventasLiquidacionesEjemplares)} u. →{' '}
               {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY * ventasLiquidacionesEjemplares)}). Cada socia (Delfi,
               Mechi, Susan) suma{' '}
               <strong>
-                (total Ventas − parte Wonky) / 3 = (
-                {currencyArsFormatter.format(ventasHeroTotalVendidoArs)} −{' '}
+                (total liquidación − parte Wonky) / 3 = (
+                {currencyArsFormatter.format(ventasLiquidacionCobradoArs)} −{' '}
                 {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY * ventasLiquidacionesEjemplares)}) / 3
               </strong>
               . <strong>Abrazandocuentos</strong> no participa de esta tabla (queda en ABRAZANDOCUENTOS).
@@ -4574,6 +4597,13 @@ function draftToSaleInput(draft: SaleDraft): SaleCreateInput {
 function parseStockNumber(value: string | undefined) {
   const parsed = Number(value?.trim() ?? '')
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0
+}
+
+/** Ejemplares por fila de inventario = cajas × libros/caja (config de primera tirada). */
+function inventoryCopiesFromBoxes(boxesStr: string | undefined, copiesPerBox: number): number {
+  if (!Number.isFinite(copiesPerBox) || copiesPerBox <= 0) return 0
+
+  return Math.max(0, Math.round(parseStockNumber(boxesStr) * copiesPerBox))
 }
 
 function formatDraftNumber(value: number) {

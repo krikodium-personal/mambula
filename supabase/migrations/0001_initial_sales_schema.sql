@@ -70,8 +70,8 @@ on conflict do nothing;
 insert into public.stock_allocations (name, copies, boxes)
 values
   ('Promocionales', 80, 2),
-  ('Abrazandocuentos', 1680, 42),
-  ('Mechi', 80, 2),
+  ('Abrazandocuentos', 320, 8),
+  ('Mechi', 120, 3),
   ('Delfi', 160, 4),
   ('Susan', 80, 2)
 on conflict (name) do update set

@@ -2,6 +2,7 @@ import type {
   PartnerGainBreakdown,
   PartnerSettlement,
   ProjectConfig,
+  Sale,
   SplitPartnerKey,
   StockAllocation,
 } from '../types'
@@ -103,11 +104,33 @@ export function computeAbrInventorySplit(
   }
 }
 
+/**
+ * Ingreso que entra en liquidación Ventas Mambula por fila:
+ * - `cobrado`: total de la línea (cantidad × precio unitario).
+ * - `parcial`: solo lo registrado en `paid_ars`.
+ */
+export function liquidacionVentasRevenueArs(
+  sale: Pick<Sale, 'paymentStatus' | 'quantity' | 'unitPriceArs' | 'paidArs'>,
+): number {
+  if (sale.paymentStatus === 'cobrado') {
+    const q = sale.quantity ?? 0
+    const p = sale.unitPriceArs ?? 0
+
+    return Math.max(0, q * p)
+  }
+
+  if (sale.paymentStatus === 'parcial') {
+    return Math.max(0, sale.paidArs)
+  }
+
+  return 0
+}
+
 /** Reparto Ventas Mambula: socias en partes iguales tras descontar Wonky fijo por ejemplar. */
 export function computeVentasMambulaSplits(
-  /** Total vendido ARS (p. ej. cobrado + pendiente en Ventas, sin encargos). */
+  /** Total ARS base del reparto (en liquidación: cobrados al total de línea + parciales según `paid_ars`). */
   totalVentasArs: number,
-  /** Ejemplares que cuentan para ese total (mismo alcance que las ventas principales). */
+  /** Ejemplares en el mismo alcance que `totalVentasArs`. */
   ventasSoldQty: number,
 ): PartnerGainBreakdown[] {
   const wonkyVentasArs = WONKY_ARS_PER_VENTA_COPY * ventasSoldQty

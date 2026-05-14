@@ -19,8 +19,8 @@ export const projectConfig: ProjectConfig = {
 }
 
 export const stockAllocations: StockAllocation[] = [
-  { name: 'Abrazandocuentos', copies: 1680, boxes: 42 },
-  { name: 'Mechi', copies: 80, boxes: 2 },
+  { name: 'Abrazandocuentos', copies: 320, boxes: 8 },
+  { name: 'Mechi', copies: 120, boxes: 3 },
   { name: 'Delfi', copies: 160, boxes: 4 },
   { name: 'Susan', copies: 80, boxes: 2 },
 ]

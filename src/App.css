@@ -740,6 +740,18 @@ button.stat-card.stat-card--clickable {
   width: 100%;
 }
 
+.inventory-values .inventory-ejemplares-derived {
+  background: transparent;
+  border-radius: 0;
+  box-sizing: border-box;
+  color: var(--label);
+  display: block;
+  font: inherit;
+  padding: 8px 0;
+  text-align: right;
+  width: 100%;
+}
+
 .inventory-actions {
   margin-top: 16px;
 }
