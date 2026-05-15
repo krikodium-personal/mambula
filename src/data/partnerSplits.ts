@@ -1,3 +1,4 @@
+import { inventoryCopiesFromBoxes } from '../lib/inventoryProgress'
 import type {
   PartnerGainBreakdown,
   PartnerSettlement,
@@ -75,10 +76,15 @@ export function computeAbrInventorySplit(
   stockAllocations: StockAllocation[],
   costRules: ProjectConfig['costRules'],
   referenceUnitPriceArs: number = ABRAZANDOCUENTOS_REFERENCE_UNIT_PRICE_ARS,
+  /** Si viene definido (> 0), `acCopies` se calcula desde cajas × ejemplares/caja (alineado con la card Inventario). */
+  copiesPerBox?: number,
 ): AbrInventorySplit {
   const ac = stockAllocations.find((row) => row.name === AC_STOCK_NAME)
-  const acCopies = ac?.copies ?? 0
   const acBoxes = ac?.boxes ?? 0
+  const acCopies =
+    copiesPerBox !== undefined && Number.isFinite(copiesPerBox) && copiesPerBox > 0
+      ? inventoryCopiesFromBoxes(String(acBoxes), copiesPerBox)
+      : ac?.copies ?? 0
   const poolGrossArs = acCopies * referenceUnitPriceArs
   const pctAbrazandoCuentos = costRules.abrazandoCuentosShare
   const pctWonky = costRules.wonkyShare

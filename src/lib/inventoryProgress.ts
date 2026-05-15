@@ -39,6 +39,18 @@ export function saleQuantityFloor(sale: Pick<Sale, 'quantity'>): number {
   return Math.max(0, Math.floor(n))
 }
 
+export function parseStockNumber(value: string | undefined) {
+  const parsed = Number(value?.trim() ?? '')
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0
+}
+
+/** Ejemplares por fila de inventario = cajas × libros/caja (config de primera tirada). */
+export function inventoryCopiesFromBoxes(boxesStr: string | undefined, copiesPerBox: number): number {
+  if (!Number.isFinite(copiesPerBox) || copiesPerBox <= 0) return 0
+
+  return Math.max(0, Math.round(parseStockNumber(boxesStr) * copiesPerBox))
+}
+
 export function soldUnitsAttributedToSeller(sales: Sale[], sellerName: string): number {
   const target = sellerName.trim()
   return sales.reduce((sum, sale) => {

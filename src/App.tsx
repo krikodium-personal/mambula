@@ -1,5 +1,5 @@
 import './App.css'
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   computeAbrazandoGananciasFromUnits,
   computeAbrInventorySplit,
@@ -10,13 +10,14 @@ import {
   AC_STOCK_NAME,
   WONKY_ARS_PER_VENTA_COPY,
   type AbrInventorySplit,
-  type AbrazandoGananciasPreview,
 } from './data/partnerSplits'
 import LiquidacionesVentasCard from './components/LiquidacionesVentasCard'
 import ProfitCard from './components/ProfitCard'
 import {
   breakdownInventoryMovement,
+  inventoryCopiesFromBoxes,
   promoDeliveredUnitsForStockRow,
+  parseStockNumber,
   saleQuantityFloor,
   soldUnitsAttributedToSeller,
   type InventoryMovementBreakdown,
@@ -27,18 +28,29 @@ import { isSupabaseConfigured } from './lib/supabase'
 import { createPartnerSettlement, loadPartnerSettlements } from './lib/partnerSettlementsRepository'
 import {
   createSale,
+  deleteAcSchemeSaleRecord,
   deleteSale,
   fallbackVentasData,
+  formatUnknownError,
+  insertAcSchemeSaleRecord,
   loadVentasData,
+  totalAcSchemeSoldQuantity,
   updateInvoiceStatus,
-  updateAcSchemeSoldUnits,
   updateStockAllocations,
   updateSale,
   type SaleCreateInput,
   type SaleUpdateInput,
   type VentasData,
 } from './lib/ventasRepository'
-import type { PartnerGainBreakdown, PartnerSettlement, Sale, SaleTransferDestination, SplitPartnerKey, StockAllocation } from './types'
+import type {
+  AcSchemeSaleRecord,
+  PartnerGainBreakdown,
+  PartnerSettlement,
+  Sale,
+  SaleTransferDestination,
+  SplitPartnerKey,
+  StockAllocation,
+} from './types'
 
 function compareSaleDateDesc(a: Sale, b: Sale): number {
   return String(b.date).localeCompare(String(a.date))
@@ -261,11 +273,6 @@ function App() {
   const [ventasData, setVentasData] = useState<VentasData>(fallbackVentasData)
   const [partnerSettlements, setPartnerSettlements] = useState<PartnerSettlement[]>([])
   const [expenses, setExpenses] = useState<Expense[]>(() => [...gastosData])
-  const [acSchemeSoldQty, setAcSchemeSoldQty] = useState(0)
-  const [acSliderPersistStatus, setAcSliderPersistStatus] = useState<
-    'idle' | 'saving' | 'saved' | 'error'
-  >('idle')
-  const acSliderPersistClearRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [loading, setLoading] = useState(isSupabaseConfigured)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
@@ -333,14 +340,7 @@ function App() {
         const data = await loadVentasData()
 
         if (!ignore) {
-          const maxAc =
-            data.stockAllocations.find((a) => a.name === AC_STOCK_NAME)?.copies ?? 0
-          const saved = data.acSchemeSoldUnits
-          const initial =
-            saved === null ? maxAc : Math.min(Math.max(0, saved), maxAc)
-
           setVentasData(data)
-          setAcSchemeSoldQty(initial)
           setLoadError(null)
         }
       } catch (error) {
@@ -427,73 +427,32 @@ function App() {
     [ventasTabSales],
   )
 
-  const abrSplit = useMemo(
-    () => computeAbrInventorySplit(stockAllocations, projectConfig.costRules),
-    [stockAllocations, projectConfig.costRules],
-  )
+  const abrSplit = useMemo(() => {
+    const copiesPerBox = projectConfig.firstPrintRun.copies / projectConfig.firstPrintRun.boxes
+    return computeAbrInventorySplit(stockAllocations, projectConfig.costRules, undefined, copiesPerBox)
+  }, [stockAllocations, projectConfig.costRules, projectConfig.firstPrintRun.boxes, projectConfig.firstPrintRun.copies])
 
-  useEffect(() => {
-    const max = abrSplit.acCopies
-    setAcSchemeSoldQty((prev) => Math.min(prev, max))
-  }, [abrSplit.acCopies])
+  const acSchemeSoldQuantityRaw = useMemo(() => {
+    const raw = totalAcSchemeSoldQuantity(ventasData)
+    return Math.max(0, raw)
+  }, [ventasData.acSchemeSales, ventasData.acSchemeSoldUnits])
 
-  useEffect(() => {
-    return () => {
-      if (acSliderPersistClearRef.current) {
-        window.clearTimeout(acSliderPersistClearRef.current)
-      }
-    }
-  }, [])
+  async function handleAcSchemeSaleSubmit(input: { quantity: number; soldAt: string }) {
+    const row = await insertAcSchemeSaleRecord(input)
+    setVentasData((current) => ({
+      ...current,
+      acSchemeSales: [row, ...current.acSchemeSales],
+      acSchemeSoldUnits: null,
+    }))
+  }
 
-  useEffect(() => {
-    if (loading || loadError) {
-      return
-    }
-
-    const max = abrSplit.acCopies
-    const clamped = Math.min(Math.max(0, acSchemeSoldQty), max)
-    const saved = ventasData.acSchemeSoldUnits
-    const equivalent = saved !== null ? saved === clamped : clamped === max
-
-    if (equivalent) {
-      return
-    }
-
-    const handle = window.setTimeout(() => {
-      if (acSliderPersistClearRef.current) {
-        window.clearTimeout(acSliderPersistClearRef.current)
-        acSliderPersistClearRef.current = null
-      }
-
-      setAcSliderPersistStatus('saving')
-
-      void updateAcSchemeSoldUnits(clamped)
-        .then(() => {
-          setVentasData((current) => ({ ...current, acSchemeSoldUnits: clamped }))
-          setAcSliderPersistStatus('saved')
-          acSliderPersistClearRef.current = window.setTimeout(() => {
-            setAcSliderPersistStatus('idle')
-            acSliderPersistClearRef.current = null
-          }, 2800)
-        })
-        .catch((error) => {
-          console.error(error)
-          setAcSliderPersistStatus('error')
-        })
-    }, 400)
-
-    return () => window.clearTimeout(handle)
-  }, [acSchemeSoldQty, loading, loadError, abrSplit.acCopies, ventasData.acSchemeSoldUnits])
-
-  const acSliderGains = useMemo(
-    () =>
-      computeAbrazandoGananciasFromUnits(
-        acSchemeSoldQty,
-        projectConfig.costRules,
-        abrSplit.referenceUnitPriceArs,
-      ),
-    [abrSplit.referenceUnitPriceArs, acSchemeSoldQty, projectConfig.costRules],
-  )
+  async function handleAcSchemeSaleDelete(id: string) {
+    await deleteAcSchemeSaleRecord(id)
+    setVentasData((current) => ({
+      ...current,
+      acSchemeSales: current.acSchemeSales.filter((r) => r.id !== id),
+    }))
+  }
 
   const partnerGainRows = useMemo(
     () => computeVentasMambulaSplits(ventasLiquidacionTotalArs, ventasLiquidacionEjemplares),
@@ -834,9 +793,8 @@ function App() {
       {tab === 'home' ? (
         <HomeScreen
           abrSplit={abrSplit}
-          acSchemeSoldQty={acSchemeSoldQty}
-          acSliderPersistStatus={acSliderPersistStatus}
-          acSliderGains={acSliderGains}
+          acSchemeSales={ventasData.acSchemeSales}
+          acSchemeSoldQuantityRaw={acSchemeSoldQuantityRaw}
           copyMechiPaymentAlias={copyMechiPaymentAlias}
           copyPaymentAlias={copyPaymentAlias}
           copyStatus={copyStatus}
@@ -847,7 +805,8 @@ function App() {
           salesPaidArsTotal={salesPaidArsTotal}
           loadError={loadError}
           loading={loading}
-          onAcSchemeSoldQtyChange={setAcSchemeSoldQty}
+          onAcSchemeSaleDelete={handleAcSchemeSaleDelete}
+          onAcSchemeSaleSubmit={handleAcSchemeSaleSubmit}
           onOpenSaleFromCuentas={handleOpenSaleFromCuentas}
           partnerGainRows={partnerGainRows}
           partnerSettlements={partnerSettlements}
@@ -954,6 +913,373 @@ function App() {
 
       <TabBar active={tab} onChange={selectTab} />
     </main>
+  )
+}
+
+function AcSchemeVentasSheet({
+  remainingQty,
+  referenceUnitPriceArs,
+  onClose,
+  onSubmit,
+}: {
+  remainingQty: number
+  referenceUnitPriceArs: number
+  onClose: () => void
+  onSubmit: (input: { quantity: number; soldAt: string }) => Promise<void>
+}) {
+  const [qtyStr, setQtyStr] = useState('')
+  const [dateStr, setDateStr] = useState(() => new Date().toISOString().slice(0, 10))
+  const [localError, setLocalError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  async function handleSubmit() {
+    const parsed = parseOptionalNumber(qtyStr)
+    if (parsed === null || parsed < 1) {
+      setLocalError('Ingresá una cantidad entera mayor a cero.')
+      return
+    }
+
+    if (!Number.isInteger(parsed)) {
+      setLocalError('La cantidad debe ser un número entero.')
+      return
+    }
+
+    if (parsed > remainingQty) {
+      setLocalError(
+        `En esta venta podés cargar hasta ${numberFormatter.format(remainingQty)} ejemplares.`,
+      )
+      return
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) {
+      setLocalError('Elegí una fecha válida.')
+      return
+    }
+
+    try {
+      setSubmitting(true)
+      setLocalError(null)
+      await onSubmit({ quantity: parsed, soldAt: dateStr.trim().slice(0, 10) })
+      onClose()
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : 'No se pudo guardar la venta.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const previewParsed = parseOptionalNumber(qtyStr)
+  const previewArs =
+    previewParsed !== null && Number.isInteger(previewParsed) && previewParsed >= 1
+      ? previewParsed * referenceUnitPriceArs
+      : null
+
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
+        <div className="grabber" />
+        <div className="sheet-head">
+          <div>
+            <h2>Nueva venta</h2>
+            <p className="muted-label">Abrazandocuentos · esquema AC</p>
+          </div>
+          <button aria-label="Cerrar" className="close-button" onClick={onClose} type="button">
+            ×
+          </button>
+        </div>
+
+        <div className="new-sale-form">
+          <p className="card-note">
+            Se guarda un registro con el <strong>monto referencial</strong> (cantidad ×{' '}
+            {currencyArsFormatter.format(referenceUnitPriceArs)}) y la <strong>fecha</strong>. Cupo
+            restante para nuevas ventas: <strong>{numberFormatter.format(remainingQty)}</strong>{' '}
+            ejemplares.
+          </p>
+          <div className="edit-grid">
+            <label className="ac-scheme-sheet-qty-label">
+              <span>Fecha de la venta</span>
+              <input
+                onChange={(event) => {
+                  setDateStr(event.target.value)
+                  setLocalError(null)
+                }}
+                type="date"
+                value={dateStr}
+              />
+            </label>
+            <label className="ac-scheme-sheet-qty-label">
+              <span>Cantidad de ejemplares</span>
+              <input
+                inputMode="numeric"
+                max={remainingQty}
+                min={1}
+                onBlur={() => {
+                  if (!qtyStr.trim()) {
+                    setQtyStr('')
+                  }
+                }}
+                onChange={(event) => {
+                  setQtyStr(event.target.value)
+                  setLocalError(null)
+                }}
+                onFocus={(event) => {
+                  setLocalError(null)
+                  if (qtyStr.trim() === '0') {
+                    setQtyStr('')
+                  } else if (qtyStr.trim() !== '') {
+                    event.currentTarget.select()
+                  }
+                }}
+                placeholder={`máx. ${remainingQty}`}
+                step={1}
+                type="number"
+                value={qtyStr}
+              />
+            </label>
+          </div>
+          {previewArs !== null ? (
+            <p className="card-note">
+              Monto referencial de esta venta:{' '}
+              <strong>{currencyArsFormatter.format(previewArs)}</strong>
+            </p>
+          ) : null}
+          {localError ? <p className="edit-error">{localError}</p> : null}
+          <div className="edit-actions">
+            <button className="secondary-button" disabled={submitting} onClick={onClose} type="button">
+              Cancelar
+            </button>
+            <button
+              className="primary-button"
+              disabled={submitting || remainingQty <= 0}
+              onClick={() => void handleSubmit()}
+              type="button"
+            >
+              {submitting ? 'Guardando...' : 'Guardar'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AcSchemeSalesListSheet({
+  legacySoldTotal,
+  onClose,
+  onDeleteRecord,
+  rows,
+}: {
+  legacySoldTotal: number
+  onClose: () => void
+  onDeleteRecord: (id: string) => Promise<void>
+  rows: AcSchemeSaleRecord[]
+}) {
+  const [confirmRow, setConfirmRow] = useState<AcSchemeSaleRecord | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const sorted = useMemo(
+    () =>
+      [...rows].sort((a, b) => {
+        const byDate = String(b.soldAt).localeCompare(String(a.soldAt))
+        if (byDate !== 0) return byDate
+
+        return String(b.id).localeCompare(String(a.id))
+      }),
+    [rows],
+  )
+  const totalQty = sorted.reduce((sum, row) => sum + row.quantity, 0)
+  const totalArs = sorted.reduce((sum, row) => sum + row.amountArs, 0)
+  const countLabel = sorted.length === 1 ? '1 registro' : `${sorted.length} registros`
+
+  return (
+    <>
+      <div className="sheet-backdrop" onClick={onClose}>
+        <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
+          <div className="grabber" />
+          <div className="sheet-head">
+            <div>
+              <h2>Ventas esquema AC</h2>
+              <p className="muted-label">Abrazandocuentos · liquidación referencial</p>
+            </div>
+            <button aria-label="Cerrar" className="close-button" onClick={onClose} type="button">
+              ×
+            </button>
+          </div>
+
+          <div className="ac-scheme-sales-list-body">
+            {sorted.length > 0 ? (
+              <p className="ac-scheme-sales-list-summary">
+                {countLabel} · {numberFormatter.format(totalQty)} ejemplares · Total referencial{' '}
+                {currencyArsFormatter.format(totalArs)}
+              </p>
+            ) : (
+              <p className="cuentas-empty">
+                {legacySoldTotal > 0
+                  ? `Hay ${numberFormatter.format(legacySoldTotal)} ejemplares contabilizados sin detalle por venta (dato anterior). Las nuevas cargas aparecen aquí.`
+                  : 'Todavía no hay ventas registradas en este esquema.'}
+              </p>
+            )}
+            {sorted.length > 0 ? (
+              <ul className="ac-scheme-sales-detail-list">
+                {sorted.map((row) => (
+                  <li className="ac-scheme-sales-detail-row" key={row.id}>
+                    <div className="ac-scheme-sales-detail-main">
+                      <strong>
+                        {ventasShortDateFormatter.format(new Date(`${row.soldAt}T12:00:00`))}
+                      </strong>
+                      <span className="ac-scheme-sales-detail-meta">
+                        {row.quantity} {row.quantity === 1 ? 'ejemplar' : 'ejemplares'}
+                      </span>
+                    </div>
+                    <div className="ac-scheme-sales-detail-trailing">
+                      <strong className="ac-scheme-sales-detail-amount">
+                        {currencyArsFormatter.format(row.amountArs)}
+                      </strong>
+                      <button
+                        aria-label={`Eliminar venta del ${ventasShortDateFormatter.format(new Date(`${row.soldAt}T12:00:00`))}`}
+                        className="ac-scheme-sales-delete"
+                        disabled={deleting}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setDeleteError(null)
+                          setConfirmRow(row)
+                        }}
+                        type="button"
+                      >
+                        <Icon name="trash" />
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      {confirmRow ? (
+        <div
+          aria-labelledby="ac-scheme-delete-title"
+          aria-modal="true"
+          className="nested-confirm-backdrop"
+          role="dialog"
+          onClick={() => {
+            if (!deleting) {
+              setConfirmRow(null)
+              setDeleteError(null)
+            }
+          }}
+        >
+          <div className="nested-confirm-dialog" onClick={(event) => event.stopPropagation()}>
+            <h3 className="nested-confirm-title" id="ac-scheme-delete-title">
+              ¿Eliminar este registro?
+            </h3>
+            <p className="nested-confirm-body">
+              Se va a quitar la venta del{' '}
+              <strong>
+                {ventasShortDateFormatter.format(new Date(`${confirmRow.soldAt}T12:00:00`))}
+              </strong>{' '}
+              ({confirmRow.quantity} {confirmRow.quantity === 1 ? 'ejemplar' : 'ejemplares'}, referencial{' '}
+              {currencyArsFormatter.format(confirmRow.amountArs)}). Esta acción no se puede deshacer.
+            </p>
+            {deleteError ? <p className="edit-error nested-confirm-error">{deleteError}</p> : null}
+            <div className="nested-confirm-actions">
+              <button
+                className="secondary-button"
+                disabled={deleting}
+                onClick={() => {
+                  setConfirmRow(null)
+                  setDeleteError(null)
+                }}
+                type="button"
+              >
+                Cancelar
+              </button>
+              <button
+                className="primary-button red"
+                disabled={deleting}
+                onClick={() => {
+                  void (async () => {
+                    setDeleting(true)
+                    setDeleteError(null)
+                    try {
+                      await onDeleteRecord(confirmRow.id)
+                      setConfirmRow(null)
+                    } catch (error) {
+                      setDeleteError(formatUnknownError(error))
+                    } finally {
+                      setDeleting(false)
+                    }
+                  })()
+                }}
+                type="button"
+              >
+                {deleting ? 'Eliminando...' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  )
+}
+
+function AbrValoresSheet({
+  abrSplit,
+  onClose,
+}: {
+  abrSplit: AbrInventorySplit
+  onClose: () => void
+}) {
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
+        <div className="grabber" />
+        <div className="sheet-head">
+          <div>
+            <h2>Valores</h2>
+            <p className="muted-label">Parámetros · ABRAZANDOCUENTOS</p>
+          </div>
+          <button aria-label="Cerrar" className="close-button" onClick={onClose} type="button">
+            ×
+          </button>
+        </div>
+        <div className="ac-scheme-sales-list-body">
+          <table className="dashboard-mini-table">
+            <tbody>
+              <tr>
+                <td>% Abrazando cuentos</td>
+                <td>{`${abrSplit.pctAbrazandoCuentos * 100}%`}</td>
+              </tr>
+              <tr>
+                <td>% Wonky</td>
+                <td>{`${abrSplit.pctWonky * 100}%`}</td>
+              </tr>
+              <tr>
+                <td>% Socias (pool)</td>
+                <td>{`${abrSplit.pctSociasPool * 100}%`}</td>
+              </tr>
+              <tr>
+                <td>Costo por libro</td>
+                <td>{currencyUsdFormatter.format(abrSplit.costoLibroUsd)}</td>
+              </tr>
+              <tr>
+                <td>Ejemplares (stock)</td>
+                <td>{numberFormatter.format(abrSplit.acCopies)}</td>
+              </tr>
+              <tr>
+                <td>Cajas (stock)</td>
+                <td>{numberFormatter.format(abrSplit.acBoxes)}</td>
+              </tr>
+              <tr>
+                <td>Precio venta referencia</td>
+                <td>{currencyArsFormatter.format(abrSplit.referenceUnitPriceArs)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -1196,9 +1522,8 @@ function CuentasMedioDetailSheet({
 
 function HomeScreen({
   abrSplit,
-  acSchemeSoldQty,
-  acSliderPersistStatus,
-  acSliderGains,
+  acSchemeSales,
+  acSchemeSoldQuantityRaw,
   copyMechiPaymentAlias,
   copyPaymentAlias,
   copyStatus,
@@ -1208,7 +1533,8 @@ function HomeScreen({
   loadError,
   loading,
   mechiCopyStatus,
-  onAcSchemeSoldQtyChange,
+  onAcSchemeSaleDelete,
+  onAcSchemeSaleSubmit,
   onOpenSaleFromCuentas,
   partnerGainRows,
   partnerSettlements,
@@ -1224,9 +1550,9 @@ function HomeScreen({
   stockAllocations,
 }: {
   abrSplit: AbrInventorySplit
-  acSchemeSoldQty: number
-  acSliderPersistStatus: 'idle' | 'saving' | 'saved' | 'error'
-  acSliderGains: AbrazandoGananciasPreview
+  acSchemeSales: AcSchemeSaleRecord[]
+  /** Suma de registros del esquema AC (sin recortar al inventario). */
+  acSchemeSoldQuantityRaw: number
   copyMechiPaymentAlias: () => void
   copyPaymentAlias: () => void
   copyStatus: 'idle' | 'copied' | 'error'
@@ -1238,7 +1564,8 @@ function HomeScreen({
   loadError: string | null
   loading: boolean
   mechiCopyStatus: 'idle' | 'copied' | 'error'
-  onAcSchemeSoldQtyChange: (units: number) => void
+  onAcSchemeSaleDelete: (id: string) => Promise<void>
+  onAcSchemeSaleSubmit: (input: { quantity: number; soldAt: string }) => Promise<void>
   onOpenSaleFromCuentas: (sale: Sale) => void
   partnerGainRows: PartnerGainBreakdown[]
   partnerSettlements: PartnerSettlement[]
@@ -1258,7 +1585,9 @@ function HomeScreen({
   stockAllocations: VentasData['stockAllocations']
 }) {
   const [settleRow, setSettleRow] = useState<PartnerGainBreakdown | null>(null)
-  const [abrDatosOpen, setAbrDatosOpen] = useState(false)
+  const [acVentasSheetOpen, setAcVentasSheetOpen] = useState(false)
+  const [acSalesListOpen, setAcSalesListOpen] = useState(false)
+  const [abrValoresSheetOpen, setAbrValoresSheetOpen] = useState(false)
   const [ventasMambulaNoteOpen, setVentasMambulaNoteOpen] = useState(false)
   const [editingInventory, setEditingInventory] = useState(false)
   const inventoryTableRows = useMemo(() => {
@@ -1297,8 +1626,24 @@ function HomeScreen({
     stockDraft,
   ])
   const inventoryError = localStockError ?? stockAllocationError
-  const acSliderMax = Math.max(0, abrSplit.acCopies)
-  const sliderValue = Math.min(Math.max(0, acSchemeSoldQty), acSliderMax)
+  const acInventoryRow = inventoryTableRows.find((row) => row.name === AC_STOCK_NAME)
+  const acBoxesStr = editingInventory
+    ? stockDraft[AC_STOCK_NAME]?.boxes ?? ''
+    : String(acInventoryRow?.boxes ?? 0)
+  const acSchemeCapCopies = inventoryCopiesFromBoxes(acBoxesStr, copiesPerBox)
+  const acSchemeCap = Math.max(0, acSchemeCapCopies)
+  const effectiveAcSchemeUnits = Math.min(acSchemeSoldQuantityRaw, acSchemeCap)
+  const acSchemeRemainingQty = Math.max(0, acSchemeCap - acSchemeSoldQuantityRaw)
+
+  const acSliderGains = useMemo(
+    () =>
+      computeAbrazandoGananciasFromUnits(
+        effectiveAcSchemeUnits,
+        projectConfig.costRules,
+        abrSplit.referenceUnitPriceArs,
+      ),
+    [abrSplit.referenceUnitPriceArs, effectiveAcSchemeUnits, projectConfig.costRules],
+  )
 
   const liquidacionesParticipantes = useMemo(
     () =>
@@ -1698,46 +2043,66 @@ function HomeScreen({
         </div>
 
         <div className="ios-card dashboard-split-card">
-          <SectionTitle eyebrow="Liquidacion" title="ABRAZANDOCUENTOS" />
+          <div className="dashboard-split-card-head">
+            <SectionTitle eyebrow="Liquidacion" title="ABRAZANDOCUENTOS" />
+            <button
+              className="row-edit-button"
+              disabled={acSchemeRemainingQty <= 0 || acSchemeCap <= 0}
+              onClick={() => setAcVentasSheetOpen(true)}
+              title={
+                acSchemeCap <= 0
+                  ? 'Sin cupo en inventario AC'
+                  : acSchemeRemainingQty <= 0
+                    ? 'Ya se alcanzó el máximo de ejemplares del esquema'
+                    : undefined
+              }
+              type="button"
+            >
+              Nueva venta
+            </button>
+          </div>
+
+          <div className="ac-scheme-summary-block">
+            <div className="ac-scheme-indicators">
+              <span className="ac-scheme-indicator-group">
+                <span className="ac-scheme-indicator-label">Vendidos</span>
+                <span className="ac-scheme-indicator-value">
+                  {numberFormatter.format(acSchemeSoldQuantityRaw)}
+                </span>
+              </span>
+              <button
+                className="ac-scheme-text-link"
+                onClick={() => setAcSalesListOpen(true)}
+                type="button"
+              >
+                Ver lista
+              </button>
+              <span aria-hidden className="ac-scheme-indicator-sep">
+                ·
+              </span>
+              <span className="ac-scheme-indicator-group">
+                <span className="ac-scheme-indicator-label">Restante</span>
+                <span className="ac-scheme-indicator-value">
+                  {numberFormatter.format(acSchemeRemainingQty)}
+                </span>
+              </span>
+            </div>
+          </div>
 
           <h4 className="dashboard-ganancias-subtitle">
             <span>Ganancias:</span>
-            {acSliderPersistStatus === 'saving' ? (
-              <span className="ac-slider-persist-badge muted">Guardando...</span>
-            ) : null}
-            {acSliderPersistStatus === 'saved' ? (
-              <span className="ac-slider-persist-badge success">Guardado</span>
-            ) : null}
-            {acSliderPersistStatus === 'error' ? (
-              <span className="ac-slider-persist-badge danger">No se pudo guardar</span>
-            ) : null}
+            <button
+              className="ac-scheme-text-link dashboard-ganancias-valores-link"
+              onClick={() => setAbrValoresSheetOpen(true)}
+              type="button"
+            >
+              Valores
+            </button>
           </h4>
-          <div className="ac-scheme-slider-block">
-            <label className="ac-scheme-slider-label" htmlFor="ac-scheme-slider">
-              Ejemplares vendidos en este esquema:{' '}
-              <strong>{numberFormatter.format(sliderValue)}</strong>
-              {' · máx. '}
-              <strong>{numberFormatter.format(acSliderMax)}</strong>
-            </label>
-            <input
-              aria-valuemax={acSliderMax}
-              aria-valuemin={0}
-              aria-valuenow={sliderValue}
-              className="ac-scheme-slider"
-              disabled={acSliderMax <= 0}
-              id="ac-scheme-slider"
-              max={acSliderMax}
-              min={0}
-              onChange={(event) => onAcSchemeSoldQtyChange(Number(event.target.value))}
-              step={1}
-              type="range"
-              value={sliderValue}
-            />
-          </div>
           <table className="dashboard-mini-table">
             <tbody>
               <tr>
-                <td>Ingreso referencial</td>
+                <td>Total ventas</td>
                 <td>{currencyArsFormatter.format(acSliderGains.poolGrossArs)}</td>
               </tr>
               <tr>
@@ -1748,77 +2113,16 @@ function HomeScreen({
                 <td>Ganancia Wonky (pool)</td>
                 <td>{currencyArsFormatter.format(acSliderGains.gananciaWonkyArs)}</td>
               </tr>
-              <tr>
-                <td>Pool Socias (Delfi, Mechi, Susan)</td>
+              <tr className="dashboard-mini-table-tr--flush-next">
+                <td>Ganancia socias</td>
                 <td>{currencyArsFormatter.format(acSliderGains.poolSociasArs)}</td>
               </tr>
               <tr>
-                <td>Cada socia (share AC)</td>
+                <td>Cada socia</td>
                 <td>{currencyArsFormatter.format(acSliderGains.gananciaPorSociaAcArs)}</td>
               </tr>
             </tbody>
           </table>
-
-          <div className="dashboard-disclosure">
-            <button
-              aria-controls="abr-datos-panel"
-              aria-expanded={abrDatosOpen}
-              className="dashboard-disclosure-trigger"
-              id="abr-datos-trigger"
-              onClick={() => {
-                setAbrDatosOpen((open) => !open)
-              }}
-              type="button"
-            >
-              <span className="dashboard-disclosure-title">Valores</span>
-              <span
-                aria-hidden
-                className={abrDatosOpen ? 'dashboard-disclosure-chevron is-open' : 'dashboard-disclosure-chevron'}
-              >
-                <Icon name="chevron-down" />
-              </span>
-            </button>
-            <div
-              className="dashboard-disclosure-panel"
-              hidden={!abrDatosOpen}
-              id="abr-datos-panel"
-              role="region"
-              aria-labelledby="abr-datos-trigger"
-            >
-              <table className="dashboard-mini-table">
-                <tbody>
-                  <tr>
-                    <td>% Abrazando cuentos</td>
-                    <td>{`${abrSplit.pctAbrazandoCuentos * 100}%`}</td>
-                  </tr>
-                  <tr>
-                    <td>% Wonky</td>
-                    <td>{`${abrSplit.pctWonky * 100}%`}</td>
-                  </tr>
-                  <tr>
-                    <td>% Socias (pool)</td>
-                    <td>{`${abrSplit.pctSociasPool * 100}%`}</td>
-                  </tr>
-                  <tr>
-                    <td>Costo por libro</td>
-                    <td>{currencyUsdFormatter.format(abrSplit.costoLibroUsd)}</td>
-                  </tr>
-                  <tr>
-                    <td>Ejemplares (stock)</td>
-                    <td>{numberFormatter.format(abrSplit.acCopies)}</td>
-                  </tr>
-                  <tr>
-                    <td>Cajas (stock)</td>
-                    <td>{numberFormatter.format(abrSplit.acBoxes)}</td>
-                  </tr>
-                  <tr>
-                    <td>Precio venta referencia</td>
-                    <td>{currencyArsFormatter.format(abrSplit.referenceUnitPriceArs)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
         </div>
 
         <LiquidacionesVentasCard
@@ -1890,6 +2194,28 @@ function HomeScreen({
             sales={cuentasMedioSheet.sales}
             title={cuentasMedioSheet.title}
           />
+        ) : null}
+
+        {acVentasSheetOpen ? (
+          <AcSchemeVentasSheet
+            remainingQty={acSchemeRemainingQty}
+            referenceUnitPriceArs={abrSplit.referenceUnitPriceArs}
+            onClose={() => setAcVentasSheetOpen(false)}
+            onSubmit={onAcSchemeSaleSubmit}
+          />
+        ) : null}
+
+        {acSalesListOpen ? (
+          <AcSchemeSalesListSheet
+            legacySoldTotal={acSchemeSoldQuantityRaw}
+            rows={acSchemeSales}
+            onClose={() => setAcSalesListOpen(false)}
+            onDeleteRecord={onAcSchemeSaleDelete}
+          />
+        ) : null}
+
+        {abrValoresSheetOpen ? (
+          <AbrValoresSheet abrSplit={abrSplit} onClose={() => setAbrValoresSheetOpen(false)} />
         ) : null}
 
         {settleRow ? (
@@ -4260,7 +4586,16 @@ function PayerChip({ name }: { name: string }) {
   return <span className={`payer-chip payer-${name.toLowerCase()}`}>{name}</span>
 }
 
-type IconName = 'search' | 'close' | 'chart' | 'home' | 'bag' | 'person' | 'package' | 'chevron-down'
+type IconName =
+  | 'search'
+  | 'close'
+  | 'chart'
+  | 'home'
+  | 'bag'
+  | 'person'
+  | 'package'
+  | 'chevron-down'
+  | 'trash'
 
 function Icon({ name }: { name: IconName }) {
   const paths = {
@@ -4276,6 +4611,14 @@ function Icon({ name }: { name: IconName }) {
         <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
         <polyline fill="none" points="3.27 6.96 12 12.01 20.73 6.96" />
         <line fill="none" x1="12" x2="12" y1="22.08" y2="12" />
+      </>
+    ),
+    trash: (
+      <>
+        <polyline points="3 6 5 6 21 6" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        <line x1="10" x2="10" y1="11" y2="17" />
+        <line x1="14" x2="14" y1="11" y2="17" />
       </>
     ),
   }
@@ -4592,18 +4935,6 @@ function draftToSaleInput(draft: SaleDraft): SaleCreateInput {
     delivered: emptyToNull(draft.delivered),
     billingNotes: emptyToNull(draft.billingNotes),
   }
-}
-
-function parseStockNumber(value: string | undefined) {
-  const parsed = Number(value?.trim() ?? '')
-  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0
-}
-
-/** Ejemplares por fila de inventario = cajas × libros/caja (config de primera tirada). */
-function inventoryCopiesFromBoxes(boxesStr: string | undefined, copiesPerBox: number): number {
-  if (!Number.isFinite(copiesPerBox) || copiesPerBox <= 0) return 0
-
-  return Math.max(0, Math.round(parseStockNumber(boxesStr) * copiesPerBox))
 }
 
 function formatDraftNumber(value: number) {

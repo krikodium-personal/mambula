@@ -22,6 +22,16 @@ export type StockAllocation = {
   boxes: number
 }
 
+/** Alta de ventas en liquidación esquema Abrazandocuentos (persistido en `ac_scheme_sales`). */
+export type AcSchemeSaleRecord = {
+  id: string
+  /** Fecha de la venta (YYYY-MM-DD). */
+  soldAt: string
+  /** Monto referencial registrado (cantidad × precio referencia AC). */
+  amountArs: number
+  quantity: number
+}
+
 /** Cuenta destino cuando el cobro fue por transferencia. */
 export type SaleTransferDestination = 'Delfi' | 'Mechi'
 

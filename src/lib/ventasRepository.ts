@@ -1,9 +1,19 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { ABRAZANDOCUENTOS_REFERENCE_UNIT_PRICE_ARS } from '../data/partnerSplits'
 import { projectConfig, sales, stockAllocations } from '../data/ventas'
 import { supabase } from './supabase'
-import type { ProjectConfig, Sale, StockAllocation } from '../types'
+import type { AcSchemeSaleRecord, ProjectConfig, Sale, StockAllocation } from '../types'
 
 const AC_SCHEME_SOLD_UNITS_LS_KEY = 'mambula_ac_scheme_sold_units'
+const AC_SCHEME_SALES_LS_KEY = 'mambula_ac_scheme_sales_json'
+
+type AcSchemeSaleRow = {
+  id: string
+  sold_at: string
+  amount_ars: number
+  quantity: number
+  created_at: string
+}
 
 type ProjectSettingsRow = {
   project_name: string
@@ -63,8 +73,199 @@ export type VentasData = {
   projectConfig: ProjectConfig
   stockAllocations: StockAllocation[]
   sales: Sale[]
-  /** null = sin override persistido (UI parte del inventario AC). */
+  /** @deprecated Filas nuevas en `acSchemeSales`; solo fallback si no hay registros en tabla. */
   acSchemeSoldUnits: number | null
+  acSchemeSales: AcSchemeSaleRecord[]
+}
+
+function mapAcSchemeSale(row: AcSchemeSaleRow): AcSchemeSaleRecord {
+  return {
+    id: row.id,
+    soldAt: row.sold_at,
+    amountArs: Number(row.amount_ars),
+    quantity: Number(row.quantity),
+  }
+}
+
+/** Ejemplares vendidos en esquema AC: suma de registros, o contador legacy si la tabla está vacía. */
+export function totalAcSchemeSoldQuantity(data: VentasData): number {
+  const fromRecords = data.acSchemeSales.reduce((sum, row) => sum + row.quantity, 0)
+  if (data.acSchemeSales.length > 0) {
+    return fromRecords
+  }
+
+  if (data.acSchemeSoldUnits != null && Number.isFinite(data.acSchemeSoldUnits)) {
+    return Math.max(0, Math.floor(Number(data.acSchemeSoldUnits)))
+  }
+
+  return 0
+}
+
+function readLocalAcSchemeSales(): AcSchemeSaleRecord[] {
+  try {
+    const raw = localStorage.getItem(AC_SCHEME_SALES_LS_KEY)
+    if (!raw) {
+      return []
+    }
+
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+
+    return parsed
+      .map((item): AcSchemeSaleRecord | null => {
+        if (!item || typeof item !== 'object') return null
+        const o = item as Record<string, unknown>
+        const id = typeof o.id === 'string' ? o.id : null
+        const soldAt = typeof o.soldAt === 'string' ? o.soldAt : null
+        const amountArs = typeof o.amountArs === 'number' ? o.amountArs : Number(o.amountArs)
+        const quantity = typeof o.quantity === 'number' ? o.quantity : Number(o.quantity)
+        if (!id || !soldAt || !Number.isFinite(amountArs) || !Number.isFinite(quantity)) return null
+
+        return {
+          id,
+          soldAt,
+          amountArs,
+          quantity: Math.max(0, Math.floor(quantity)),
+        }
+      })
+      .filter((row): row is AcSchemeSaleRecord => row !== null && row.quantity > 0)
+  } catch {
+    return []
+  }
+}
+
+function writeLocalAcSchemeSales(rows: AcSchemeSaleRecord[]) {
+  try {
+    localStorage.setItem(AC_SCHEME_SALES_LS_KEY, JSON.stringify(rows))
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Migra el contador LS viejo a registros locales (una sola vez). */
+function migrateLocalLegacyAcSchemeSales(): AcSchemeSaleRecord[] {
+  const existing = readLocalAcSchemeSales()
+  if (existing.length > 0) {
+    return existing
+  }
+
+  const legacy = readLocalAcSchemeSoldUnits()
+  if (legacy === null || legacy <= 0) {
+    return []
+  }
+
+  const qty = Math.floor(legacy)
+  const row: AcSchemeSaleRecord = {
+    id: crypto.randomUUID(),
+    soldAt: new Date().toISOString().slice(0, 10),
+    amountArs: qty * ABRAZANDOCUENTOS_REFERENCE_UNIT_PRICE_ARS,
+    quantity: qty,
+  }
+
+  writeLocalAcSchemeSales([row])
+
+  try {
+    localStorage.removeItem(AC_SCHEME_SOLD_UNITS_LS_KEY)
+  } catch {
+    /* ignore */
+  }
+
+  return [row]
+}
+
+async function fetchAcSchemeSalesRows(client: SupabaseClient): Promise<AcSchemeSaleRow[]> {
+  const { data, error } = await client
+    .from('ac_scheme_sales')
+    .select('id, sold_at, amount_ars, quantity, created_at')
+    .order('sold_at', { ascending: false })
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    throw error
+  }
+
+  return (data ?? []) as AcSchemeSaleRow[]
+}
+
+export async function insertAcSchemeSaleRecord(input: {
+  soldAt: string
+  quantity: number
+}): Promise<AcSchemeSaleRecord> {
+  const qty = Math.max(1, Math.floor(Number(input.quantity)))
+  const amountArs = qty * ABRAZANDOCUENTOS_REFERENCE_UNIT_PRICE_ARS
+  const soldAt = input.soldAt.trim().slice(0, 10)
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(soldAt)) {
+    throw new Error('Fecha de venta inválida.')
+  }
+
+  if (!supabase) {
+    const row: AcSchemeSaleRecord = {
+      id: crypto.randomUUID(),
+      soldAt,
+      amountArs,
+      quantity: qty,
+    }
+
+    writeLocalAcSchemeSales([row, ...readLocalAcSchemeSales()])
+
+    return row
+  }
+
+  const { data, error } = await supabase
+    .from('ac_scheme_sales')
+    .insert({
+      sold_at: soldAt,
+      amount_ars: amountArs,
+      quantity: qty,
+    })
+    .select('id, sold_at, amount_ars, quantity, created_at')
+    .single()
+
+  if (error) {
+    throw error
+  }
+
+  return mapAcSchemeSale(data as AcSchemeSaleRow)
+}
+
+/** Mensaje legible para errores de Supabase/PostgREST (no siempre son `instanceof Error`). */
+export function formatUnknownError(error: unknown): string {
+  if (error instanceof Error) return error.message
+
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const msg = (error as { message: unknown }).message
+    if (typeof msg === 'string' && msg.trim()) return msg.trim()
+  }
+
+  return 'No se pudo eliminar.'
+}
+
+export async function deleteAcSchemeSaleRecord(id: string): Promise<void> {
+  const trimmed = id.trim()
+  if (!trimmed) {
+    throw new Error('Identificador inválido.')
+  }
+
+  if (!supabase) {
+    const next = readLocalAcSchemeSales().filter((row) => row.id !== trimmed)
+    writeLocalAcSchemeSales(next)
+    return
+  }
+
+  const { data, error } = await supabase.from('ac_scheme_sales').delete().eq('id', trimmed).select('id')
+
+  if (error) {
+    throw new Error(formatUnknownError(error))
+  }
+
+  if (!data?.length) {
+    throw new Error(
+      'No se borró ninguna fila (¿el registro ya no existe?). Si usás Supabase, comprobá que esté aplicada la migración que permite DELETE en ac_scheme_sales.',
+    )
+  }
 }
 
 function readLocalAcSchemeSoldUnits(): number | null {
@@ -289,20 +490,25 @@ export const fallbackVentasData: VentasData = {
   stockAllocations,
   sales,
   acSchemeSoldUnits: null,
+  acSchemeSales: [],
 }
 
 export async function loadVentasData(): Promise<VentasData> {
   if (!supabase) {
+    const acSchemeSales = migrateLocalLegacyAcSchemeSales()
+
     return {
       ...fallbackVentasData,
-      acSchemeSoldUnits: readLocalAcSchemeSoldUnits(),
+      acSchemeSoldUnits: null,
+      acSchemeSales,
     }
   }
 
-  const [settingsResponse, allocationsResponse, saleRows] = await Promise.all([
+  const [settingsResponse, allocationsResponse, saleRows, acSchemeSalesRows] = await Promise.all([
     supabase.from('project_settings').select('*').limit(1).maybeSingle(),
     supabase.from('stock_allocations').select('name, copies, boxes').order('created_at'),
     fetchAllSalesRows(supabase),
+    fetchAcSchemeSalesRows(supabase),
   ])
 
   if (settingsResponse.error) {
@@ -322,6 +528,8 @@ export async function loadVentasData(): Promise<VentasData> {
         ? Math.max(0, Math.floor(Number(rawAcUnits)))
         : null
 
+  const acSchemeSales = acSchemeSalesRows.map((row) => mapAcSchemeSale(row))
+
   return {
     projectConfig: settings ? mapProjectConfig(settings) : projectConfig,
     stockAllocations: ((allocationsResponse.data ?? []) as StockAllocationRow[]).map(
@@ -329,6 +537,7 @@ export async function loadVentasData(): Promise<VentasData> {
     ),
     sales: saleRows.map(mapSale),
     acSchemeSoldUnits,
+    acSchemeSales,
   }
 }
 
