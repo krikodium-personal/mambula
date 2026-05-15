@@ -2724,8 +2724,14 @@ button.stat-card.stat-card--clickable {
 }
 
 .dashboard-ganancias-valores-link {
+  flex-shrink: 0;
   font-size: 14px;
   font-weight: 600;
+  margin-left: auto;
+}
+
+.ac-ganancias-total-hero {
+  margin-bottom: 12px;
 }
 
 .ac-slider-persist-badge {
@@ -2770,6 +2776,14 @@ button.stat-card.stat-card--clickable {
   -webkit-overflow-scrolling: touch;
 }
 
+.ac-scheme-indicators-trailing {
+  align-items: baseline;
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .ac-scheme-indicator-group {
   align-items: baseline;
   display: inline-flex;
@@ -2808,8 +2822,15 @@ button.stat-card.stat-card--clickable {
   font-size: 13px;
   font-weight: 600;
   padding: 0;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  text-decoration: none;
+}
+
+.ac-scheme-text-link:hover {
+  opacity: 0.85;
+}
+
+.ac-scheme-text-link:active {
+  opacity: 0.7;
 }
 
 .ac-scheme-text-link:focus-visible {

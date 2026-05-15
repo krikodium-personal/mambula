@@ -2077,15 +2077,24 @@ function HomeScreen({
               >
                 Ver lista
               </button>
-              <span aria-hidden className="ac-scheme-indicator-sep">
-                ·
-              </span>
-              <span className="ac-scheme-indicator-group">
-                <span className="ac-scheme-indicator-label">Restante</span>
-                <span className="ac-scheme-indicator-value">
-                  {numberFormatter.format(acSchemeRemainingQty)}
+              <div className="ac-scheme-indicators-trailing">
+                <span aria-hidden className="ac-scheme-indicator-sep">
+                  ·
                 </span>
-              </span>
+                <span className="ac-scheme-indicator-group">
+                  <span className="ac-scheme-indicator-label">Restante</span>
+                  <span className="ac-scheme-indicator-value">
+                    {numberFormatter.format(acSchemeRemainingQty)}
+                  </span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="liquidaciones-ventas-hero ac-ganancias-total-hero">
+            <div className="liquidaciones-ventas-hero-label">Total ventas</div>
+            <div className="liquidaciones-ventas-hero-bruto">
+              {currencyArsFormatter.format(acSliderGains.poolGrossArs)}
             </div>
           </div>
 
@@ -2101,10 +2110,6 @@ function HomeScreen({
           </h4>
           <table className="dashboard-mini-table">
             <tbody>
-              <tr>
-                <td>Total ventas</td>
-                <td>{currencyArsFormatter.format(acSliderGains.poolGrossArs)}</td>
-              </tr>
               <tr>
                 <td>Ganancia Abrazando cuentos</td>
                 <td>{currencyArsFormatter.format(acSliderGains.gananciaAbrazandoCuentosArs)}</td>
