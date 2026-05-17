@@ -47,7 +47,8 @@ export type Sale = {
   paymentMethod: 'transferencia' | 'efectivo' | 'otro' | null
   /** Solo si `paymentMethod === 'transferencia'`; ventas viejas pueden tener null. */
   transferDestination: SaleTransferDestination | null
-  paymentStatus: 'pendiente' | 'parcial' | 'cobrado'
+  /** `encargo`: lista Encargos (sin confundir con pendiente de Ventas). */
+  paymentStatus: 'pendiente' | 'parcial' | 'cobrado' | 'encargo'
   invoiceStatus?: 'facturado' | 'pendiente' | 'no_aplica'
   delivered?: string | null
   billingNotes?: string | null

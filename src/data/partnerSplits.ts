@@ -111,7 +111,7 @@ export function computeAbrInventorySplit(
 }
 
 /**
- * Ingreso que entra en liquidación Ventas Mambula por fila:
+ * Ingreso que entra en liquidación Ventas Mambula por fila (`payment_status` en BD):
  * - `cobrado`: total de la línea (cantidad × precio unitario).
  * - `parcial`: solo lo registrado en `paid_ars`.
  */
@@ -132,11 +132,11 @@ export function liquidacionVentasRevenueArs(
   return 0
 }
 
-/** Reparto Ventas Mambula: socias en partes iguales tras descontar Wonky fijo por ejemplar. */
+/** Reparto Ventas Mambula: socias en partes iguales tras descontar Wonky fijo por ejemplar (alineado a StatCard Vendidos = payment_status cobrado|parcial). */
 export function computeVentasMambulaSplits(
   /** Total ARS base del reparto (en liquidación: cobrados al total de línea + parciales según `paid_ars`). */
   totalVentasArs: number,
-  /** Ejemplares en el mismo alcance que `totalVentasArs`. */
+  /** Ejemplares vendidos registrados (misma suma que StatCard Vendidos: cobrado + parcial). */
   ventasSoldQty: number,
 ): PartnerGainBreakdown[] {
   const wonkyVentasArs = WONKY_ARS_PER_VENTA_COPY * ventasSoldQty

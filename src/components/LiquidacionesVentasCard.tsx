@@ -31,7 +31,8 @@ function Avatar({ name }: { name: string }) {
 type LiquidacionesVentasCardProps = {
   participantes: LiquidacionParticipanteVM[]
   totalCobradoArs: number
-  totalEjemplares: number
+  /** Misma cuenta que la StatCard «Vendidos»: suma de cantidades con `payment_status` cobrado o parcial (no pendiente). */
+  ejemplaresVendidos: number
   wonkyPorLibroArs: number
   formatArs: (value: number) => string
   explainExpanded: boolean
@@ -43,7 +44,7 @@ type LiquidacionesVentasCardProps = {
 export default function LiquidacionesVentasCard({
   participantes,
   totalCobradoArs,
-  totalEjemplares,
+  ejemplaresVendidos,
   wonkyPorLibroArs,
   formatArs,
   explainExpanded,
@@ -80,8 +81,10 @@ export default function LiquidacionesVentasCard({
           <div className="liquidaciones-ventas-subtitle-row">
             <span className="liquidaciones-ventas-subtitle-text">
               Solo ventas <strong>cobradas</strong> y <strong>parciales</strong> (sin encargos). Total destacado: monto
-              íntegro en cobradas + pagos registrados en parciales. Ejemplares de esas mismas ventas. Reparto: cada socia
-              (total − Wonky) / 3, Wonky = {formatArs(wonkyPorLibroArs)} por ejemplar.
+              íntegro en cobradas + pagos registrados en parciales. Los ejemplares del bloque superior coinciden con la
+              tarjeta <strong>Vendidos</strong> del inicio: suman las cantidades de todas las ventas cuyo{' '}
+              <strong>payment_status</strong> en la base es cobrado o parcial (no pendiente). Reparto: cada socia (total
+              liquidación − Wonky) / 3; Wonky = {formatArs(wonkyPorLibroArs)} por cada uno de esos ejemplares.
             </span>
             <button
               aria-expanded={false}
@@ -103,7 +106,7 @@ export default function LiquidacionesVentasCard({
               <div className="liquidaciones-ventas-hero-bruto">{formatArs(totalCobradoArs)}</div>
             </div>
             <div className="liquidaciones-ventas-hero-meta">
-              {totalEjemplares} ejemplares
+              {ejemplaresVendidos} ejemplares
               <br />
               <span className="liquidaciones-ventas-hero-meta-strong">{participantes.length} participantes</span>
             </div>

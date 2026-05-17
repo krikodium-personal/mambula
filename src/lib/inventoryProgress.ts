@@ -51,41 +51,48 @@ export function inventoryCopiesFromBoxes(boxesStr: string | undefined, copiesPer
   return Math.max(0, Math.round(parseStockNumber(boxesStr) * copiesPerBox))
 }
 
-export function soldUnitsAttributedToSeller(sales: Sale[], sellerName: string): number {
+function isSaleDeliveredForInventory(sale: Pick<Sale, 'delivered'>): boolean {
+  return (sale.delivered ?? '').trim().toLowerCase() === 'si'
+}
+
+/** Unidades entregadas (`delivered = SI`) atribuidas al vendedor de la fila de stock. */
+export function deliveredUnitsAttributedToSeller(sales: Sale[], sellerName: string): number {
   const target = sellerName.trim()
   return sales.reduce((sum, sale) => {
     if (sale.seller?.trim() !== target) return sum
+    if (!isSaleDeliveredForInventory(sale)) return sum
+
     return sum + saleQuantityFloor(sale)
   }, 0)
 }
 
 export type InventoryMovementBreakdown = {
   promo: number
-  sold: number
+  delivered: number
   remainder: number
 }
 
 /**
- * Reparte las unidades asignadas en inventario entre promocional entregado, vendido y lo que queda.
- * Abrazandocuentos no usa promos; solo vendido + resto.
+ * Reparte las unidades asignadas entre promo entregado, ventas entregadas atribuidas y stock restante.
+ * Abrazandocuentos no usa promos; solo entregados + resto.
  */
 export function breakdownInventoryMovement(
   allocationCopies: number,
   promoUnits: number,
-  soldUnitsRaw: number,
+  deliveredUnitsRaw: number,
   rowName: string,
 ): InventoryMovementBreakdown {
   const total = Math.max(0, Math.floor(allocationCopies))
 
   if (!isSocStockName(rowName)) {
-    const sold = Math.min(Math.max(0, Math.floor(soldUnitsRaw)), total)
-    return { promo: 0, sold, remainder: Math.max(0, total - sold) }
+    const delivered = Math.min(Math.max(0, Math.floor(deliveredUnitsRaw)), total)
+    return { promo: 0, delivered, remainder: Math.max(0, total - delivered) }
   }
 
   const promo = Math.min(Math.max(0, Math.floor(promoUnits)), total)
-  const soldCap = Math.max(0, total - promo)
-  const sold = Math.min(Math.max(0, Math.floor(soldUnitsRaw)), soldCap)
-  const remainder = Math.max(0, total - promo - sold)
+  const deliveredCap = Math.max(0, total - promo)
+  const delivered = Math.min(Math.max(0, Math.floor(deliveredUnitsRaw)), deliveredCap)
+  const remainder = Math.max(0, total - promo - delivered)
 
-  return { promo, sold, remainder }
+  return { promo, delivered, remainder }
 }

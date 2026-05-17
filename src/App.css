@@ -800,7 +800,7 @@ button.stat-card.stat-card--clickable {
   background: var(--inventory-promo);
 }
 
-.inventory-stock-segment.sold {
+.inventory-stock-segment.delivered {
   background: var(--green);
 }
 
@@ -844,7 +844,7 @@ button.stat-card.stat-card--clickable {
   background: var(--inventory-promo);
 }
 
-.inventory-stock-count-dot.sold {
+.inventory-stock-count-dot.delivered {
   background: var(--green);
 }
 

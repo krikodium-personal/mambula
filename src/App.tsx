@@ -18,10 +18,10 @@ import {
   inventoryCopiesFromBoxes,
   promoDeliveredUnitsForStockRow,
   parseStockNumber,
-  saleQuantityFloor,
-  soldUnitsAttributedToSeller,
+  deliveredUnitsAttributedToSeller,
   type InventoryMovementBreakdown,
 } from './lib/inventoryProgress'
+import { getSalePending, getSaleStatus, getSaleTotal } from './lib/saleFinancials'
 import { loadPromoRows, savePromoRows, type PromoRowStored, type PromoRowsStored } from './lib/promocionalesStorage'
 import { fetchPromoRowsFromSupabase, savePromoRowsRemote } from './lib/promocionalesRepository'
 import { isSupabaseConfigured } from './lib/supabase'
@@ -54,6 +54,18 @@ import type {
 
 function compareSaleDateDesc(a: Sale, b: Sale): number {
   return String(b.date).localeCompare(String(a.date))
+}
+
+/** Ejemplares en líneas con `payment_status` cobrado o parcial (excluye pendiente). StatCard «Vendidos». */
+function paidCopiesForSale(sale: Sale): number {
+  const rawQty = sale.quantity
+  const qty =
+    rawQty != null && Number.isFinite(Number(rawQty)) ? Math.max(0, Math.floor(Number(rawQty))) : 0
+  if (qty <= 0) return 0
+
+  if (sale.paymentStatus !== 'cobrado' && sale.paymentStatus !== 'parcial') return 0
+
+  return qty
 }
 
 /** Alias Mercado Pago para cobros a nombre de Mechi (distinto del alias principal en proyecto). */
@@ -395,6 +407,7 @@ function App() {
 
   const { projectConfig, sales, stockAllocations } = ventasData
   const soldCopies = sales.reduce((total, sale) => total + (sale.quantity ?? 0), 0)
+  const paidSoldCopies = useMemo(() => sales.reduce((sum, s) => sum + paidCopiesForSale(s), 0), [sales])
 
   /** Suma `paid_ars`: todas las ventas cargadas (tras paginar la tabla `sales` en Supabase). */
   const salesPaidArsTotal = useMemo(() => sales.reduce((sum, sale) => sum + sale.paidArs, 0), [sales])
@@ -403,20 +416,13 @@ function App() {
 
   const ventasLiquidacionScopedSales = useMemo(
     () =>
-      ventasTabSales.filter(
-        (s) => s.paymentStatus === 'cobrado' || s.paymentStatus === 'parcial',
-      ),
+      ventasTabSales.filter((s) => s.paymentStatus === 'cobrado' || s.paymentStatus === 'parcial'),
     [ventasTabSales],
   )
 
   const ventasLiquidacionTotalArs = useMemo(
     () =>
       ventasLiquidacionScopedSales.reduce((sum, s) => sum + liquidacionVentasRevenueArs(s), 0),
-    [ventasLiquidacionScopedSales],
-  )
-
-  const ventasLiquidacionEjemplares = useMemo(
-    () => ventasLiquidacionScopedSales.reduce((sum, s) => sum + saleQuantityFloor(s), 0),
     [ventasLiquidacionScopedSales],
   )
 
@@ -455,8 +461,8 @@ function App() {
   }
 
   const partnerGainRows = useMemo(
-    () => computeVentasMambulaSplits(ventasLiquidacionTotalArs, ventasLiquidacionEjemplares),
-    [ventasLiquidacionTotalArs, ventasLiquidacionEjemplares],
+    () => computeVentasMambulaSplits(ventasLiquidacionTotalArs, paidSoldCopies),
+    [ventasLiquidacionTotalArs, paidSoldCopies],
   )
 
   async function savePartnerSettlement(input: {
@@ -562,7 +568,21 @@ function App() {
       return
     }
 
-    const resolvedPayment = draftResolveSalePayment(saleDraft)
+    const baselineSale = ventasData.sales.find((s) => s.id === saleId)
+    const deliveredSi = (saleDraft.delivered ?? '').trim().toLowerCase() === 'si'
+    const encargoOpts = {
+      undeliveredEncargoBucket:
+        !deliveredSi &&
+        (baselineSale?.paymentStatus === 'encargo' ||
+          Boolean(
+            saleDetailEncargoSummary &&
+              baselineSale &&
+              !isDelivered(baselineSale) &&
+              isSalePending(baselineSale),
+          )),
+    }
+
+    const resolvedPayment = draftResolveSalePayment(saleDraft, encargoOpts)
     if (!resolvedPayment.ok) {
       setEditError(resolvedPayment.error)
       setSaleDraftErrorField(resolvedPayment.field)
@@ -646,7 +666,9 @@ function App() {
       }
     }
 
-    const resolvedPayment = draftResolveSalePayment(createDraft)
+    const encargoOpts = { undeliveredEncargoBucket: newSaleSheetVariant === 'encargo' }
+
+    const resolvedPayment = draftResolveSalePayment(createDraft, encargoOpts)
     if (!resolvedPayment.ok) {
       setEditError(resolvedPayment.error)
       setSaleDraftErrorField(resolvedPayment.field)
@@ -667,7 +689,7 @@ function App() {
       return
     }
 
-    const input = draftToSaleInput(createDraft)
+    const input = draftToSaleInput(createDraft, encargoOpts)
 
     try {
       setSavingNewSale(true)
@@ -714,6 +736,15 @@ function App() {
   async function toggleSaleDelivered(sale: Sale) {
     const nextDelivered = isDelivered(sale) ? 'NO' : 'SI'
 
+    let nextPaymentStatus = sale.paymentStatus
+    if (nextDelivered === 'SI') {
+      if (sale.paymentStatus === 'encargo') {
+        nextPaymentStatus = paymentStatusAfterDeliveredEncargo(sale)
+      } else if (!isDelivered(sale) && isSalePending(sale)) {
+        nextPaymentStatus = paymentStatusAfterDeliveredEncargo(sale)
+      }
+    }
+
     try {
       setTogglingDeliveryId(sale.id)
       setEditError(null)
@@ -727,7 +758,7 @@ function App() {
         paymentMethod: sale.paymentMethod,
         transferDestination:
           sale.paymentMethod === 'transferencia' ? sale.transferDestination : null,
-        paymentStatus: sale.paymentStatus,
+        paymentStatus: nextPaymentStatus,
         invoiceStatus: sale.invoiceStatus ?? 'pendiente',
         delivered: nextDelivered,
         billingNotes: sale.billingNotes ?? null,
@@ -801,7 +832,6 @@ function App() {
           mechiCopyStatus={mechiCopyStatus}
           expenses={expenses}
           ventasLiquidacionCobradoArs={ventasLiquidacionTotalArs}
-          ventasLiquidacionesEjemplares={ventasLiquidacionEjemplares}
           salesPaidArsTotal={salesPaidArsTotal}
           loadError={loadError}
           loading={loading}
@@ -814,6 +844,7 @@ function App() {
           savePartnerSettlement={savePartnerSettlement}
           saveStockAllocationChanges={saveStockAllocationChanges}
           savingStockAllocations={savingStockAllocations}
+          paidSoldCopies={paidSoldCopies}
           soldCopies={soldCopies}
           promoRows={promoRows}
           sales={sales}
@@ -1381,13 +1412,13 @@ function PartnerSettlementSheet({
 function InventoryStockBar({
   promo,
   remainder,
-  sold,
+  delivered,
 }: {
   promo: number
   remainder: number
-  sold: number
+  delivered: number
 }) {
-  const total = promo + sold + remainder
+  const total = promo + delivered + remainder
   if (total <= 0) {
     return <div className="progress-track inventory-stock-bar tall empty" aria-hidden="true" />
   }
@@ -1395,7 +1426,7 @@ function InventoryStockBar({
   return (
     <div className="progress-track inventory-stock-bar tall" aria-hidden="true">
       {promo > 0 ? <div className="inventory-stock-segment promo" style={{ flex: promo }} /> : null}
-      {sold > 0 ? <div className="inventory-stock-segment sold" style={{ flex: sold }} /> : null}
+      {delivered > 0 ? <div className="inventory-stock-segment delivered" style={{ flex: delivered }} /> : null}
       {remainder > 0 ? <div className="inventory-stock-segment remainder" style={{ flex: remainder }} /> : null}
     </div>
   )
@@ -1417,9 +1448,9 @@ function InventoryStockCounts({
           <span className="inventory-stock-count-value">{numberFormatter.format(movement.promo)}</span>
         </div>
         <div className="inventory-stock-count-cell">
-          <span className="inventory-stock-count-dot sold" />
-          <span className="inventory-stock-count-label">vendidos</span>
-          <span className="inventory-stock-count-value">{numberFormatter.format(movement.sold)}</span>
+          <span className="inventory-stock-count-dot delivered" />
+          <span className="inventory-stock-count-label">Entregados</span>
+          <span className="inventory-stock-count-value">{numberFormatter.format(movement.delivered)}</span>
         </div>
         <div className="inventory-stock-count-cell">
           <span className="inventory-stock-count-dot remainder" />
@@ -1433,9 +1464,9 @@ function InventoryStockCounts({
   return (
     <div className="inventory-stock-counts inventory-stock-counts--ac">
       <div className="inventory-stock-count-cell">
-        <span className="inventory-stock-count-dot sold" />
-        <span className="inventory-stock-count-label">vendidos</span>
-        <span className="inventory-stock-count-value">{numberFormatter.format(movement.sold)}</span>
+        <span className="inventory-stock-count-dot delivered" />
+        <span className="inventory-stock-count-label">Entregados</span>
+        <span className="inventory-stock-count-value">{numberFormatter.format(movement.delivered)}</span>
       </div>
       <div className="inventory-stock-count-cell">
         <span className="inventory-stock-count-dot remainder" />
@@ -1529,7 +1560,6 @@ function HomeScreen({
   copyStatus,
   expenses,
   ventasLiquidacionCobradoArs,
-  ventasLiquidacionesEjemplares,
   loadError,
   loading,
   mechiCopyStatus,
@@ -1538,6 +1568,7 @@ function HomeScreen({
   onOpenSaleFromCuentas,
   partnerGainRows,
   partnerSettlements,
+  paidSoldCopies,
   salesPaidArsTotal,
   projectConfig,
   promoRows,
@@ -1559,8 +1590,6 @@ function HomeScreen({
   expenses: Expense[]
   /** Base ARS liquidación Ventas Mambula: líneas `cobrado` al total de venta + `parcial` según `paidArs` (sin encargos). */
   ventasLiquidacionCobradoArs: number
-  /** Ejemplares en esas mismas ventas (`cobrado` + `parcial`); base Wonky en liquidación. */
-  ventasLiquidacionesEjemplares: number
   loadError: string | null
   loading: boolean
   mechiCopyStatus: 'idle' | 'copied' | 'error'
@@ -1569,6 +1598,8 @@ function HomeScreen({
   onOpenSaleFromCuentas: (sale: Sale) => void
   partnerGainRows: PartnerGainBreakdown[]
   partnerSettlements: PartnerSettlement[]
+  /** Ejemplares con `payment_status` cobrado o parcial (todas las ventas); StatCard Vendidos. */
+  paidSoldCopies: number
   salesPaidArsTotal: number
   projectConfig: VentasData['projectConfig']
   promoRows: PromoRowsStored
@@ -1596,10 +1627,6 @@ function HomeScreen({
     const otherRows = rows.filter((row) => row.name !== AC_STOCK_NAME)
     return [...otherRows, ...acRows]
   }, [stockAllocations])
-  const ventasPrincipalesSales = useMemo(
-    () => sales.filter((sale) => !isEncargoSale(sale)),
-    [sales],
-  )
   const [stockDraft, setStockDraft] = useState<StockAllocationDraft>(() => {
     return createStockAllocationDraft(allocationsForHomeInventoryTable(stockAllocations))
   })
@@ -1838,7 +1865,7 @@ function HomeScreen({
         <div className="kpi-grid">
           <StatCard label="Primera tirada" sub="ejemplares" value={numberFormatter.format(projectConfig.firstPrintRun.copies)} />
           <StatCard label="Cajas" sub={`${numberFormatter.format(copiesPerBox)} libros por caja`} value={numberFormatter.format(projectConfig.firstPrintRun.boxes)} />
-          <StatCard label="Vendidos" sub={`${numberFormatter.format(availableCopies)} disponibles`} value={numberFormatter.format(soldCopies)} />
+          <StatCard label="Vendidos" sub={`${numberFormatter.format(availableCopies)} disponibles`} value={numberFormatter.format(paidSoldCopies)} />
           <StatCard label="Ingresos" sub="Suma pagados" value={currencyArsFormatter.format(salesPaidArsTotal)} />
         </div>
 
@@ -1974,8 +2001,8 @@ function HomeScreen({
                 : inventoryCopiesFromBoxes(String(item.boxes), copiesPerBox)
 
               const promoUnits = promoDeliveredUnitsForStockRow(promoRows, item.name)
-              const soldUnits = soldUnitsAttributedToSeller(ventasPrincipalesSales, item.name)
-              const movement = breakdownInventoryMovement(allocationCopies, promoUnits, soldUnits, item.name)
+              const deliveredUnits = deliveredUnitsAttributedToSeller(sales, item.name)
+              const movement = breakdownInventoryMovement(allocationCopies, promoUnits, deliveredUnits, item.name)
               const isSociaRow = item.name === 'Delfi' || item.name === 'Mechi' || item.name === 'Susan'
 
               return (
@@ -2023,7 +2050,7 @@ function HomeScreen({
                   <InventoryStockBar
                     promo={movement.promo}
                     remainder={movement.remainder}
-                    sold={movement.sold}
+                    delivered={movement.delivered}
                   />
                   <InventoryStockCounts isSociaRow={isSociaRow} movement={movement} />
                 </div>
@@ -2133,17 +2160,18 @@ function HomeScreen({
         <LiquidacionesVentasCard
           explainDetail={
             <>
-              Solo cuentan ventas principales con estado <strong>cobrado</strong> o <strong>parcial</strong> (sin
-              encargos). El importe destacado suma el <strong>total de la venta</strong> en cobradas y el{' '}
-              <strong>monto ya abonado</strong> en parciales. Wonky retiene{' '}
-              {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY)} por cada ejemplar de esas ventas (
-              {numberFormatter.format(ventasLiquidacionesEjemplares)} u. →{' '}
-              {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY * ventasLiquidacionesEjemplares)}). Cada socia (Delfi,
-              Mechi, Susan) suma{' '}
+              Solo cuentan ventas principales con <strong>payment_status</strong>{' '}
+              <strong>cobrado</strong> o <strong>parcial</strong> en la base (sin encargos). El importe destacado suma el{' '}
+              <strong>total de la venta</strong> en cobradas y el <strong>monto ya abonado</strong> en parciales. Wonky
+              retiene {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY)} por cada ejemplar contado en la tarjeta{' '}
+              <strong>Vendidos</strong> (todas las ventas con ese mismo criterio de estado:{' '}
+              {numberFormatter.format(paidSoldCopies)} u. →{' '}
+              {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY * paidSoldCopies)}). Cada socia (Delfi, Mechi, Susan)
+              suma{' '}
               <strong>
                 (total liquidación − parte Wonky) / 3 = (
                 {currencyArsFormatter.format(ventasLiquidacionCobradoArs)} −{' '}
-                {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY * ventasLiquidacionesEjemplares)}) / 3
+                {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY * paidSoldCopies)}) / 3
               </strong>
               . <strong>Abrazandocuentos</strong> no participa de esta tabla (queda en ABRAZANDOCUENTOS).
             </>
@@ -2159,7 +2187,7 @@ function HomeScreen({
           onToggleExplain={() => setVentasMambulaNoteOpen((open) => !open)}
           participantes={liquidacionesParticipantes}
           totalCobradoArs={ventasLiquidacionCobradoArs}
-          totalEjemplares={ventasLiquidacionesEjemplares}
+          ejemplaresVendidos={paidSoldCopies}
           wonkyPorLibroArs={WONKY_ARS_PER_VENTA_COPY}
         />
 
@@ -4644,34 +4672,10 @@ function CopyIcon() {
   )
 }
 
-function getSaleTotal(sale: Sale) {
-  return (sale.quantity ?? 0) * (sale.unitPriceArs ?? 0)
-}
-
-function getSalePending(sale: Sale) {
-  const total = getSaleTotal(sale)
-
-  if (total === 0 && sale.paidArs === 0) return 0
-
-  return total - sale.paidArs
-}
-
 function isSalePending(sale: Sale) {
   if (sale.quantity === null || sale.unitPriceArs === null) return true
 
   return getSalePending(sale) > 0
-}
-
-function getSaleStatus(sale: Sale): 'pagado' | 'parcial' | 'pendiente' {
-  if (sale.paymentStatus === 'cobrado') return 'pagado'
-  if (sale.paymentStatus === 'parcial') return 'parcial'
-
-  if (sale.quantity === null || sale.unitPriceArs === null) return 'pendiente'
-
-  const pending = getSalePending(sale)
-
-  if (pending <= 0) return 'pagado'
-  return sale.paidArs > 0 ? 'parcial' : 'pendiente'
 }
 
 function isDelivered(sale: Sale) {
@@ -4683,9 +4687,25 @@ function isInvoicePending(sale: Sale): boolean {
   return (sale.invoiceStatus ?? 'pendiente') === 'pendiente'
 }
 
-/** Pendiente de entrega y de cobro (figura solo en Encargos, no en la lista principal de Ventas). */
-function isEncargoSale(sale: Sale) {
+/** Encargos: `payment_status = encargo` (sin entregar), o filas legacy sin entregar con cobro pendiente (misma lista que antes de migrar). */
+function isEncargoSale(sale: Sale): boolean {
+  if (sale.paymentStatus === 'encargo') {
+    return !isDelivered(sale)
+  }
+
   return !isDelivered(sale) && isSalePending(sale)
+}
+
+/** Al marcar entregado, sale del bucket encargo → estados de ventas principales. */
+function paymentStatusAfterDeliveredEncargo(sale: Sale): Sale['paymentStatus'] {
+  const q = sale.quantity ?? 0
+  const pu = sale.unitPriceArs ?? 0
+  const total = q * pu
+  if (total <= 0 && sale.paidArs <= 0) return 'pendiente'
+  if (total > 0 && sale.paidArs >= total) return 'cobrado'
+  if (sale.paidArs > 0) return 'parcial'
+
+  return 'pendiente'
 }
 
 function formatCompact(value: number) {
@@ -4772,6 +4792,15 @@ function getPathForTab(tab: AppTab) {
 function salePaymentTierFromSale(sale: Sale): SalePaymentTier {
   if (sale.paymentStatus === 'cobrado') return 'pagado'
   if (sale.paymentStatus === 'parcial') return 'parcial'
+  if (sale.paymentStatus === 'encargo') {
+    const q = sale.quantity ?? 0
+    const pu = sale.unitPriceArs ?? 0
+    const total = q * pu
+    if (sale.paidArs <= 0) return 'porPagar'
+    if (total > 0 && sale.paidArs >= total) return 'pagado'
+
+    return 'parcial'
+  }
 
   const q = sale.quantity ?? 0
   const pu = sale.unitPriceArs ?? 0
@@ -4792,9 +4821,45 @@ function saleLineTotalArsDraft(draft: SaleDraft): number | null {
 
 function draftResolveSalePayment(
   draft: SaleDraft,
+  opts?: { undeliveredEncargoBucket?: boolean },
 ):
   | { ok: true; paidArs: number; paymentStatus: Sale['paymentStatus'] }
   | { ok: false; error: string; field: SaleDraftErrorField } {
+  const deliveredSi = (draft.delivered ?? '').trim().toLowerCase() === 'si'
+
+  if (opts?.undeliveredEncargoBucket && !deliveredSi) {
+    if (draft.paymentTier === 'porPagar') {
+      return { ok: true, paidArs: 0, paymentStatus: 'encargo' }
+    }
+
+    const totalEncargo = saleLineTotalArsDraft(draft)
+
+    if (draft.paymentTier === 'parcial') {
+      if (totalEncargo === null || totalEncargo <= 0) {
+        return {
+          ok: false,
+          error: 'Completá unidades y precio unitario para registrar un pago parcial.',
+          field: 'saleLine',
+        }
+      }
+
+      const part = parseOptionalNumber(draft.partialPaidArs)
+      if (part === null || part <= 0) {
+        return { ok: false, error: 'Ingresa el monto del pago parcial', field: 'partialPaid' }
+      }
+
+      if (part >= totalEncargo) {
+        return {
+          ok: false,
+          error: 'El monto parcial tiene que ser menor al total de la venta.',
+          field: 'partialPaid',
+        }
+      }
+
+      return { ok: true, paidArs: part, paymentStatus: 'encargo' }
+    }
+  }
+
   if (draft.paymentTier === 'porPagar') {
     return { ok: true, paidArs: 0, paymentStatus: 'pendiente' }
   }
@@ -4920,8 +4985,11 @@ function otroPaymentMethodValidationError(draft: SaleDraft): string | null {
   return 'Elegí Transferencia o Efectivo como medio de pago antes de guardar.'
 }
 
-function draftToSaleInput(draft: SaleDraft): SaleCreateInput {
-  const resolved = draftResolveSalePayment(draft)
+function draftToSaleInput(
+  draft: SaleDraft,
+  opts?: { undeliveredEncargoBucket?: boolean },
+): SaleCreateInput {
+  const resolved = draftResolveSalePayment(draft, opts)
   if (!resolved.ok) {
     throw new Error(resolved.error)
   }
