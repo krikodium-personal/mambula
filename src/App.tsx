@@ -844,6 +844,7 @@ function App() {
       ) : null}
       {tab === 'ventas' ? (
         <VentasScreen
+          loading={loading}
           paidSalesArs={ventasTabPaidArs}
           pendingSalesArs={ventasTabPendingArs}
           sales={ventasTabSales}
@@ -854,6 +855,7 @@ function App() {
       ) : null}
       {tab === 'encargos' ? (
         <EncargosScreen
+          loading={loading}
           sales={encargoSales}
           onSelectSale={handleSelectSaleFromEncargosList}
           onVenderEncargo={openEncargoVenderSheet}
@@ -2278,7 +2280,17 @@ function ventasPaymentMethodLabel(method: Sale['paymentMethod']): string {
   return VENTAS_PAYMENT_METHOD_LABELS[method]
 }
 
+function ScreenListLoading({ label = 'Cargando…' }: { label?: string }) {
+  return (
+    <div className="screen-list-loading" role="status" aria-live="polite">
+      <span aria-hidden="true" className="screen-list-loading-spinner" />
+      <span className="screen-list-loading-label">{label}</span>
+    </div>
+  )
+}
+
 function VentasScreen({
+  loading,
   paidSalesArs,
   pendingSalesArs,
   onSelectSale,
@@ -2286,6 +2298,7 @@ function VentasScreen({
   sales,
   togglingDeliveryId,
 }: {
+  loading: boolean
   paidSalesArs: number
   pendingSalesArs: number
   onSelectSale: (sale: Sale) => void
@@ -2513,7 +2526,11 @@ function VentasScreen({
         ))}
       </div>
 
-      {filteredSales.length === 0 ? <p className="empty-message">Sin resultados</p> : null}
+      {loading && filteredSales.length === 0 ? (
+        <ScreenListLoading />
+      ) : filteredSales.length === 0 ? (
+        <p className="empty-message">Sin resultados</p>
+      ) : null}
 
       {filterSheetOpen ? (
         <VentasFilterSheet
@@ -2653,10 +2670,12 @@ function VentasFilterSheet({
 }
 
 function EncargosScreen({
+  loading,
   onSelectSale,
   onVenderEncargo,
   sales,
 }: {
+  loading: boolean
   onSelectSale: (sale: Sale) => void
   onVenderEncargo: (sale: Sale) => void
   sales: Sale[]
@@ -2748,7 +2767,9 @@ function EncargosScreen({
         ))}
       </div>
 
-      {filteredSales.length === 0 ? (
+      {loading && filteredSales.length === 0 ? (
+        <ScreenListLoading />
+      ) : filteredSales.length === 0 ? (
         <p className="empty-message">{sales.length === 0 ? 'Sin encargos activos' : 'Sin resultados'}</p>
       ) : null}
     </section>

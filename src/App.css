@@ -1638,6 +1638,37 @@ button.stat-card.stat-card--clickable {
   margin: 0;
 }
 
+.screen-list-loading {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  justify-content: center;
+  padding: 36px 16px 28px;
+}
+
+.screen-list-loading-spinner {
+  animation: screen-list-spin 0.75s linear infinite;
+  border: 2.5px solid rgba(60, 60, 67, 0.14);
+  border-radius: 50%;
+  border-top-color: var(--accent);
+  height: 28px;
+  width: 28px;
+}
+
+.screen-list-loading-label {
+  color: var(--label-3);
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+}
+
+@keyframes screen-list-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .sheet-backdrop {
   align-items: flex-end;
   background: rgba(0, 0, 0, 0.4);
