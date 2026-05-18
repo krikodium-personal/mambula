@@ -3130,7 +3130,7 @@ function SaleDetailSheet({
   )
 }
 
-const UNIT_PRICE_ARS_VALUES = [15000, 12500, 7500] as const
+const UNIT_PRICE_ARS_VALUES = [15000, 12500, 9750, 7500] as const
 
 function unitPriceSegmentActive(unitPriceArs: string): string {
   const trimmed = unitPriceArs.trim()
