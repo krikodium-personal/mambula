@@ -39,6 +39,20 @@ export function saleQuantityFloor(sale: Pick<Sale, 'quantity'>): number {
   return Math.max(0, Math.floor(n))
 }
 
+export function isSaleCobradoOrParcial(sale: Pick<Sale, 'paymentStatus'>): boolean {
+  return sale.paymentStatus === 'cobrado' || sale.paymentStatus === 'parcial'
+}
+
+/** Ejemplares con `payment_status` cobrado o parcial (excluye pendiente y encargo). Alineado a StatCard «Vendidos». */
+export function paidCopiesForSale(sale: Pick<Sale, 'quantity' | 'paymentStatus'>): number {
+  const qty = saleQuantityFloor(sale)
+  if (qty <= 0) return 0
+
+  if (!isSaleCobradoOrParcial(sale)) return 0
+
+  return qty
+}
+
 export function parseStockNumber(value: string | undefined) {
   const parsed = Number(value?.trim() ?? '')
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0

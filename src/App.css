@@ -410,6 +410,18 @@ button.stat-card.stat-card--clickable {
   overflow-wrap: anywhere;
 }
 
+.seller-stats-block {
+  margin-bottom: 4px;
+}
+
+.seller-stats-note {
+  color: var(--label-3);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  margin: 6px 2px 12px;
+}
+
 .stat-card strong.accent-green {
   color: var(--green);
 }

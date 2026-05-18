@@ -19,6 +19,8 @@ import {
   promoDeliveredUnitsForStockRow,
   parseStockNumber,
   deliveredUnitsAttributedToSeller,
+  isSaleCobradoOrParcial,
+  paidCopiesForSale,
   type InventoryMovementBreakdown,
 } from './lib/inventoryProgress'
 import { getSalePending, getSaleStatus, getSaleTotal } from './lib/saleFinancials'
@@ -54,18 +56,6 @@ import type {
 
 function compareSaleDateDesc(a: Sale, b: Sale): number {
   return String(b.date).localeCompare(String(a.date))
-}
-
-/** Ejemplares en líneas con `payment_status` cobrado o parcial (excluye pendiente). StatCard «Vendidos». */
-function paidCopiesForSale(sale: Sale): number {
-  const rawQty = sale.quantity
-  const qty =
-    rawQty != null && Number.isFinite(Number(rawQty)) ? Math.max(0, Math.floor(Number(rawQty))) : 0
-  if (qty <= 0) return 0
-
-  if (sale.paymentStatus !== 'cobrado' && sale.paymentStatus !== 'parcial') return 0
-
-  return qty
 }
 
 /** Alias Mercado Pago para cobros a nombre de Mechi (distinto del alias principal en proyecto). */
@@ -2386,12 +2376,15 @@ function VentasScreen({
     return sellerNames
       .filter((seller) => seller !== AC_STOCK_NAME)
       .map((seller) => {
-      const sellerSales = sales.filter((sale) => sale.seller === seller)
+      const sellerSales = sales.filter(
+        (sale) => sale.seller === seller && isSaleCobradoOrParcial(sale),
+      )
 
       return {
         seller,
         count: sellerSales.length,
-        total: sellerSales.reduce((sum, sale) => sum + getSaleTotal(sale), 0),
+        copies: sellerSales.reduce((sum, sale) => sum + paidCopiesForSale(sale), 0),
+        total: sellerSales.reduce((sum, sale) => sum + liquidacionVentasRevenueArs(sale), 0),
       }
     })
   }, [sales])
@@ -2478,6 +2471,7 @@ function VentasScreen({
         />
       </div>
 
+      <div className="seller-stats-block">
       <div className="seller-stats seller-stats--full-currency">
         {sellerTotals.map((item) => (
           <button
@@ -2493,9 +2487,17 @@ function VentasScreen({
           >
             <span>{item.seller}</span>
             <strong>{currencyArsFormatter.format(item.total)}</strong>
-            <p>{item.count} {item.count === 1 ? 'venta' : 'ventas'}</p>
+            <p>
+              {item.count} {item.count === 1 ? 'venta' : 'ventas'}
+            </p>
+            <p>
+              {numberFormatter.format(item.copies)}{' '}
+              {item.copies === 1 ? 'ejemplar' : 'ejemplares'}
+            </p>
           </button>
         ))}
+      </div>
+      <p className="seller-stats-note">Se consideran solo ventas cobradas parcial o totalmente</p>
       </div>
 
       <div className="list-group">
