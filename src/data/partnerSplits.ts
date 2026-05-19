@@ -160,6 +160,12 @@ export function computeVentasMambulaSplits(
   return [...sociaRows, wonkyRow]
 }
 
-export function settlementsTotalForPartner(settlements: PartnerSettlement[], partner: SplitPartnerKey): number {
-  return settlements.filter((row) => row.partner === partner).reduce((sum, row) => sum + row.amountArs, 0)
+export function settlementsTotalForPartner(
+  settlements: PartnerSettlement[],
+  partner: SplitPartnerKey,
+  scope: PartnerSettlement['scope'] = 'liquidacion',
+): number {
+  return settlements
+    .filter((row) => row.partner === partner && (row.scope ?? 'liquidacion') === scope)
+    .reduce((sum, row) => sum + row.amountArs, 0)
 }

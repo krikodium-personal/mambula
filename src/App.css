@@ -445,11 +445,145 @@ button.stat-card.stat-card--clickable {
   margin: 4px 0 10px;
 }
 
+.cuentas-card-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.cuentas-card-head .section-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.cuentas-card-actions {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.cuentas-card-link {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0;
+  text-align: right;
+}
+
+.cuentas-card-link:hover {
+  opacity: 0.85;
+}
+
+.cuentas-card-link:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .cuentas-card-sub {
   color: var(--label-3);
   font-size: 13px;
   line-height: 1.45;
   margin: 0 0 14px;
+}
+
+.cuentas-settle-available-hint {
+  color: var(--label-3);
+  display: block;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.cuentas-settle-question-block {
+  margin: 8px 0 4px;
+}
+
+.cuentas-settle-question-meta {
+  color: var(--label-3);
+  font-size: 13px;
+  margin: 0 0 12px;
+}
+
+.cuentas-settle-summary {
+  margin-top: 4px;
+}
+
+.cuentas-settle-partner-block {
+  border-top: 0.5px solid var(--separator);
+  margin-top: 12px;
+  padding-top: 10px;
+}
+
+.cuentas-settle-partner-block h4 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.cuentas-settle-partner-block--compact {
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.cuentas-settle-finals-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin: 16px 0 6px;
+  text-transform: uppercase;
+}
+
+.cuentas-settle-finals-sub {
+  color: var(--label-3);
+  font-size: 11px;
+  font-weight: 600;
+  margin: 8px 0 4px;
+  text-transform: uppercase;
+}
+
+.cuentas-tx-sheet-body {
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+.cuentas-tx-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cuentas-tx-item {
+  border-bottom: 0.5px solid var(--separator);
+  padding: 14px 0;
+}
+
+.cuentas-tx-item:last-child {
+  border-bottom: none;
+}
+
+.cuentas-tx-item-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.cuentas-tx-item-date {
+  color: var(--label-3);
+  font-size: 12px;
+}
+
+.detail-sheet--tall {
+  max-height: min(88vh, 720px);
 }
 
 .cuentas-subsection-label {
@@ -2137,6 +2271,99 @@ button.stat-card.stat-card--clickable {
   padding: 16px 16px 12px;
 }
 
+.liquidaciones-ventas-head--with-action {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.liquidaciones-ventas-head--with-action .liquidaciones-ventas-title {
+  margin-bottom: 0;
+}
+
+.liquidaciones-ventas-actions {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.liquidaciones-ventas-link {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0;
+  text-align: right;
+}
+
+.liquidaciones-ventas-link:hover {
+  opacity: 0.85;
+}
+
+.liquidaciones-ventas-link:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.wonky-settle-preview {
+  margin: 4px 0 8px;
+}
+
+.wonky-settle-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.wonky-settle-source-option {
+  align-items: flex-start;
+  border: 0.5px solid var(--separator);
+  border-radius: 12px;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.wonky-settle-source-option:has(input:checked) {
+  background: rgba(0, 122, 255, 0.08);
+  border-color: var(--accent);
+}
+
+.wonky-settle-source-option input {
+  margin-top: 3px;
+}
+
+.wonky-settle-source-option-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wonky-settle-source-option-label {
+  color: var(--label);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.wonky-settle-source-option-meta {
+  color: var(--label-3);
+  font-size: 12px;
+}
+
 .liquidaciones-ventas-head-row {
   display: flex;
 }
@@ -2418,30 +2645,12 @@ button.stat-card.stat-card--clickable {
 }
 
 .liquidaciones-ventas-row-actions {
-  align-items: center;
-  display: flex;
-  gap: 10px;
   margin-top: 10px;
   padding-left: 44px;
 }
 
-.liquidaciones-ventas-saldar-btn {
-  background: var(--gray-fill);
-  border: none;
-  border-radius: 999px;
-  color: var(--accent);
-  cursor: pointer;
-  flex: none;
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  padding: 6px 12px;
-  white-space: nowrap;
-}
-
-.liquidaciones-ventas-saldar-btn:disabled {
-  cursor: default;
-  opacity: 0.45;
+.liquidaciones-ventas-row-actions .liquidaciones-ventas-progress-track--thin {
+  width: 100%;
 }
 
 .dashboard-mini-table {

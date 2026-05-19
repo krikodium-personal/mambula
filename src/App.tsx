@@ -6,13 +6,29 @@ import {
   computeVentasMambulaSplits,
   estimateArsPerUsdFromExpenseRates,
   liquidacionVentasRevenueArs,
-  settlementsTotalForPartner,
   AC_STOCK_NAME,
   WONKY_ARS_PER_VENTA_COPY,
   type AbrInventorySplit,
 } from './data/partnerSplits'
+import CuentasMedioSettlementModal from './components/CuentasMedioSettlementModal'
+import CuentasMedioTransactionsSheet from './components/CuentasMedioTransactionsSheet'
 import LiquidacionesVentasCard from './components/LiquidacionesVentasCard'
 import ProfitCard from './components/ProfitCard'
+import {
+  computeCuentasMedioGrossFromSales,
+  CUENTAS_SOCIAS,
+  type CuentasMedioBalances,
+  type CuentasSocia,
+} from './lib/cuentasMedioBalances'
+import type { CuentasSettlementComputeResult } from './lib/cuentasSettlementEngine'
+import {
+  applyCuentasOperationsToBalances,
+  loadCuentasSettlementOperations,
+  persistCuentasSettlement,
+  persistWonkyCuentasSettlement,
+  type CuentasSettlementOperation,
+} from './lib/cuentasSettlementsRepository'
+import type { CuentasPaymentSource } from './lib/cuentasPaymentSources'
 import {
   breakdownInventoryMovement,
   inventoryCopiesFromBoxes,
@@ -28,6 +44,11 @@ import { loadPromoRows, savePromoRows, type PromoRowStored, type PromoRowsStored
 import { fetchPromoRowsFromSupabase, savePromoRowsRemote } from './lib/promocionalesRepository'
 import { isSupabaseConfigured } from './lib/supabase'
 import { createPartnerSettlement, loadPartnerSettlements } from './lib/partnerSettlementsRepository'
+import {
+  wonkyLiquidacionSaldadoArs,
+  wonkyLiquidacionSettlements,
+  wonkySettledCopiesFromSettlements,
+} from './lib/wonkySettlement'
 import {
   createSale,
   deleteAcSchemeSaleRecord,
@@ -274,6 +295,7 @@ function App() {
   const [tab, setTab] = useState<AppTab>(() => getTabFromLocation())
   const [ventasData, setVentasData] = useState<VentasData>(fallbackVentasData)
   const [partnerSettlements, setPartnerSettlements] = useState<PartnerSettlement[]>([])
+  const [cuentasOperations, setCuentasOperations] = useState<CuentasSettlementOperation[]>([])
   const [expenses, setExpenses] = useState<Expense[]>(() => [...gastosData])
   const [loading, setLoading] = useState(isSupabaseConfigured)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -384,6 +406,22 @@ function App() {
   }, [])
 
   useEffect(() => {
+    let ignore = false
+
+    loadCuentasSettlementOperations()
+      .then((rows) => {
+        if (!ignore) setCuentasOperations(rows)
+      })
+      .catch(() => {
+        if (!ignore) setCuentasOperations([])
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [])
+
+  useEffect(() => {
     function syncTabFromHistory() {
       setTab(getTabFromLocation())
     }
@@ -455,12 +493,32 @@ function App() {
     [ventasLiquidacionTotalArs, paidSoldCopies],
   )
 
-  async function savePartnerSettlement(input: {
-    partner: SplitPartnerKey
-    amountArs: number
-    settledOn: string
-  }) {
-    const row = await createPartnerSettlement(input)
+  async function saveWonkyEjemplaresSettlement(
+    input: {
+      copies: number
+      settledOn: string
+      amountArs: number
+      source: CuentasPaymentSource
+    },
+    balancesBefore: CuentasMedioBalances,
+  ) {
+    const op = await persistWonkyCuentasSettlement(
+      input.settledOn,
+      {
+        copies: input.copies,
+        amountArs: input.amountArs,
+        source: input.source,
+      },
+      balancesBefore,
+    )
+    const row = await createPartnerSettlement({
+      partner: 'Wonky',
+      amountArs: input.amountArs,
+      settledOn: input.settledOn,
+      scope: String(input.copies),
+      operationId: op.id,
+    })
+    setCuentasOperations((current) => [op, ...current])
     setPartnerSettlements((current) => [row, ...current])
   }
 
@@ -821,17 +879,23 @@ function App() {
           copyStatus={copyStatus}
           mechiCopyStatus={mechiCopyStatus}
           expenses={expenses}
-          ventasLiquidacionCobradoArs={ventasLiquidacionTotalArs}
           salesPaidArsTotal={salesPaidArsTotal}
           loadError={loadError}
           loading={loading}
           onAcSchemeSaleDelete={handleAcSchemeSaleDelete}
           onAcSchemeSaleSubmit={handleAcSchemeSaleSubmit}
           onOpenSaleFromCuentas={handleOpenSaleFromCuentas}
+          cuentasOperations={cuentasOperations}
+          onCuentasSettlementApplied={async (result, settledOn) => {
+            const op = await persistCuentasSettlement(settledOn, result)
+            setCuentasOperations((current) => [op, ...current])
+            const settlements = await loadPartnerSettlements()
+            setPartnerSettlements(settlements)
+          }}
           partnerGainRows={partnerGainRows}
           partnerSettlements={partnerSettlements}
+          onWonkyEjemplaresSettlement={saveWonkyEjemplaresSettlement}
           projectConfig={projectConfig}
-          savePartnerSettlement={savePartnerSettlement}
           saveStockAllocationChanges={saveStockAllocationChanges}
           savingStockAllocations={savingStockAllocations}
           paidSoldCopies={paidSoldCopies}
@@ -1306,101 +1370,6 @@ function AbrValoresSheet({
   )
 }
 
-function PartnerSettlementSheet({
-  breakdown,
-  onClose,
-  onSubmit,
-  partnerSettlements,
-}: {
-  breakdown: PartnerGainBreakdown
-  partnerSettlements: PartnerSettlement[]
-  onClose: () => void
-  onSubmit: (amountArs: number, settledOn: string) => Promise<void>
-}) {
-  const settledTotal = settlementsTotalForPartner(partnerSettlements, breakdown.partner)
-  const pendingArs = Math.max(0, breakdown.totalGainArs - settledTotal)
-  const [amount, setAmount] = useState(() => (pendingArs > 0 ? String(Math.round(pendingArs)) : ''))
-  const [dateStr, setDateStr] = useState(() => new Date().toISOString().slice(0, 10))
-  const [localError, setLocalError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
-
-  async function handleSave() {
-    const amt = parseOptionalNumber(amount)
-    if (amt === null || amt <= 0) {
-      setLocalError('Ingresá un monto válido.')
-      return
-    }
-
-    if (amt > pendingArs + 0.005) {
-      setLocalError('El monto no puede superar lo pendiente.')
-      return
-    }
-
-    if (!dateStr) {
-      setLocalError('Elegí una fecha.')
-      return
-    }
-
-    try {
-      setSubmitting(true)
-      setLocalError(null)
-      await onSubmit(amt, dateStr)
-    } catch (error) {
-      setLocalError(error instanceof Error ? error.message : 'No se pudo registrar el saldo.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <div className="sheet-backdrop" onClick={onClose}>
-      <div className="detail-sheet" onClick={(event) => event.stopPropagation()}>
-        <div className="grabber" />
-        <div className="sheet-head">
-          <div>
-            <h2>Saldar cuenta</h2>
-            <p>{breakdown.partner}</p>
-          </div>
-          <button className="close-button" onClick={onClose} type="button">×</button>
-        </div>
-
-        <div className="new-sale-form">
-          <div className="settlement-summary">
-            <div className="sheet-list-item">
-              <span>Ganancia total</span>
-              <strong>{currencyArsFormatter.format(breakdown.totalGainArs)}</strong>
-            </div>
-            <div className="sheet-list-item">
-              <span>Ya saldado</span>
-              <strong>{currencyArsFormatter.format(settledTotal)}</strong>
-            </div>
-            <div className="sheet-list-item">
-              <span>Pendiente</span>
-              <strong>{currencyArsFormatter.format(pendingArs)}</strong>
-            </div>
-          </div>
-          {breakdown.wonkyIllustratorUsd !== undefined ? (
-            <p className="card-note">
-              Incluye ilustración estimada {currencyUsdFormatter.format(breakdown.wonkyIllustratorUsd)} USD · tipo de cambio referencial.
-            </p>
-          ) : null}
-          <div className="edit-grid">
-            <input inputMode="decimal" placeholder="Monto a saldar (ARS)" value={amount} onChange={(event) => setAmount(event.target.value)} />
-            <input type="date" value={dateStr} onChange={(event) => setDateStr(event.target.value)} />
-          </div>
-          {localError ? <p className="edit-error">{localError}</p> : null}
-          <div className="edit-actions">
-            <button className="secondary-button" disabled={submitting} onClick={onClose} type="button">Cancelar</button>
-            <button className="primary-button" disabled={submitting || pendingArs <= 0} onClick={() => void handleSave()} type="button">
-              {submitting ? 'Guardando...' : 'Registrar saldo'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function InventoryStockBar({
   promo,
   remainder,
@@ -1551,13 +1520,15 @@ function HomeScreen({
   copyPaymentAlias,
   copyStatus,
   expenses,
-  ventasLiquidacionCobradoArs,
   loadError,
   loading,
   mechiCopyStatus,
   onAcSchemeSaleDelete,
   onAcSchemeSaleSubmit,
+  cuentasOperations,
+  onCuentasSettlementApplied,
   onOpenSaleFromCuentas,
+  onWonkyEjemplaresSettlement,
   partnerGainRows,
   partnerSettlements,
   paidSoldCopies,
@@ -1565,7 +1536,6 @@ function HomeScreen({
   projectConfig,
   promoRows,
   sales,
-  savePartnerSettlement,
   saveStockAllocationChanges,
   savingStockAllocations,
   soldCopies,
@@ -1580,14 +1550,23 @@ function HomeScreen({
   copyPaymentAlias: () => void
   copyStatus: 'idle' | 'copied' | 'error'
   expenses: Expense[]
-  /** Base ARS liquidación Ventas Mambula: líneas `cobrado` al total de venta + `parcial` según `paidArs` (sin encargos). */
-  ventasLiquidacionCobradoArs: number
   loadError: string | null
   loading: boolean
   mechiCopyStatus: 'idle' | 'copied' | 'error'
   onAcSchemeSaleDelete: (id: string) => Promise<void>
   onAcSchemeSaleSubmit: (input: { quantity: number; soldAt: string }) => Promise<void>
+  cuentasOperations: CuentasSettlementOperation[]
+  onCuentasSettlementApplied: (result: CuentasSettlementComputeResult, settledOn: string) => Promise<void>
   onOpenSaleFromCuentas: (sale: Sale) => void
+  onWonkyEjemplaresSettlement: (
+    input: {
+      copies: number
+      settledOn: string
+      amountArs: number
+      source: CuentasPaymentSource
+    },
+    balancesBefore: CuentasMedioBalances,
+  ) => Promise<void>
   partnerGainRows: PartnerGainBreakdown[]
   partnerSettlements: PartnerSettlement[]
   /** Ejemplares con `payment_status` cobrado o parcial (todas las ventas); StatCard Vendidos. */
@@ -1596,22 +1575,15 @@ function HomeScreen({
   projectConfig: VentasData['projectConfig']
   promoRows: PromoRowsStored
   sales: Sale[]
-  savePartnerSettlement: (input: {
-    partner: SplitPartnerKey
-    amountArs: number
-    settledOn: string
-  }) => Promise<void>
   saveStockAllocationChanges: (allocations: StockAllocation[]) => Promise<void>
   savingStockAllocations: boolean
   soldCopies: number
   stockAllocationError: string | null
   stockAllocations: VentasData['stockAllocations']
 }) {
-  const [settleRow, setSettleRow] = useState<PartnerGainBreakdown | null>(null)
   const [acVentasSheetOpen, setAcVentasSheetOpen] = useState(false)
   const [acSalesListOpen, setAcSalesListOpen] = useState(false)
   const [abrValoresSheetOpen, setAbrValoresSheetOpen] = useState(false)
-  const [ventasMambulaNoteOpen, setVentasMambulaNoteOpen] = useState(false)
   const [editingInventory, setEditingInventory] = useState(false)
   const inventoryTableRows = useMemo(() => {
     const rows = allocationsForHomeInventoryTable(stockAllocations)
@@ -1624,6 +1596,8 @@ function HomeScreen({
   })
   const [localStockError, setLocalStockError] = useState<string | null>(null)
   const [cuentasMedioSheet, setCuentasMedioSheet] = useState<{ title: string; sales: Sale[] } | null>(null)
+  const [cuentasSettleOpen, setCuentasSettleOpen] = useState(false)
+  const [cuentasTxOpen, setCuentasTxOpen] = useState(false)
   const availableCopies = projectConfig.firstPrintRun.copies - soldCopies
   const copiesPerBox = projectConfig.firstPrintRun.copies / projectConfig.firstPrintRun.boxes
   /** Cajas no asignadas a destinos del Home (mismas filas que la tabla; sin Promocionales). Ejemplares = cajas × libros/caja. */
@@ -1664,18 +1638,19 @@ function HomeScreen({
     [abrSplit.referenceUnitPriceArs, effectiveAcSchemeUnits, projectConfig.costRules],
   )
 
-  const liquidacionesParticipantes = useMemo(
-    () =>
-      partnerGainRows.map((row) => {
-        const saldado = settlementsTotalForPartner(partnerSettlements, row.partner)
-        return {
-          nombre: row.partner,
-          ganancia: row.totalGainArs,
-          saldado,
-          pendiente: Math.max(0, row.totalGainArs - saldado),
-        }
-      }),
-    [partnerGainRows, partnerSettlements],
+  const wonkySaldadoArs = useMemo(
+    () => wonkyLiquidacionSaldadoArs(partnerSettlements),
+    [partnerSettlements],
+  )
+
+  const wonkyEjemplaresSaldados = useMemo(
+    () => wonkySettledCopiesFromSettlements(partnerSettlements),
+    [partnerSettlements],
+  )
+
+  const wonkyLiquidacionRows = useMemo(
+    () => wonkyLiquidacionSettlements(partnerSettlements),
+    [partnerSettlements],
   )
 
   const expenseFallbackArsPerUsd = useMemo(
@@ -1705,9 +1680,24 @@ function HomeScreen({
     partnerGainRows,
   ])
 
-  /** Cobrado efectivo por vendedor; transferencias por cuenta destino (solo ventas Cobrado). */
+  const cuentasMedioGross = useMemo(() => computeCuentasMedioGrossFromSales(sales), [sales])
+
+  const cuentasBalances = useMemo(
+    () =>
+      applyCuentasOperationsToBalances(
+        { efectivo: cuentasMedioGross.efectivo, banco: cuentasMedioGross.banco },
+        cuentasOperations,
+      ),
+    [cuentasMedioGross, cuentasOperations],
+  )
+
+  /** Ventas cobradas por bucket (para detalle al tocar una fila). */
   const cuentasPorMedio = useMemo(() => {
-    const efectivoBySeller = new Map<string, Sale[]>()
+    const efectivoSalesBySocia: Record<CuentasSocia, Sale[]> = {
+      Delfi: [],
+      Mechi: [],
+      Susan: [],
+    }
     const transferenciaSales = {
       Delfi: [] as Sale[],
       Mechi: [] as Sale[],
@@ -1718,10 +1708,10 @@ function HomeScreen({
       if (sale.paymentStatus !== 'cobrado') continue
 
       if (sale.paymentMethod === 'efectivo') {
-        const seller = sale.seller?.trim() || 'Sin vendedor'
-        const arr = efectivoBySeller.get(seller) ?? []
-        arr.push(sale)
-        efectivoBySeller.set(seller, arr)
+        const seller = sale.seller?.trim()
+        if (seller === 'Delfi' || seller === 'Mechi' || seller === 'Susan') {
+          efectivoSalesBySocia[seller].push(sale)
+        }
       } else if (sale.paymentMethod === 'transferencia') {
         if (sale.transferDestination === 'Delfi') transferenciaSales.Delfi.push(sale)
         else if (sale.transferDestination === 'Mechi') transferenciaSales.Mechi.push(sale)
@@ -1729,36 +1719,23 @@ function HomeScreen({
       }
     }
 
-    const sellerOrderIndex = (name: string) => {
-      const i = sellerNames.indexOf(name as (typeof sellerNames)[number])
-      return i === -1 ? 999 : i
-    }
-
-    const efectivoRows = [...efectivoBySeller.entries()]
-      .map(([seller, saleList]) => ({
-        seller,
-        amount: saleList.reduce((sum, s) => sum + s.paidArs, 0),
-        sales: saleList,
-      }))
-      .sort((a, b) => {
-        const da = sellerOrderIndex(a.seller)
-        const db = sellerOrderIndex(b.seller)
-        if (da !== db) return da - db
-
-        return a.seller.localeCompare(b.seller, 'es')
-      })
+    const efectivoRows = CUENTAS_SOCIAS.map((seller) => ({
+      seller,
+      amount: cuentasBalances.efectivo[seller],
+      sales: efectivoSalesBySocia[seller],
+    }))
 
     const transferencia = {
-      Delfi: transferenciaSales.Delfi.reduce((sum, s) => sum + s.paidArs, 0),
-      Mechi: transferenciaSales.Mechi.reduce((sum, s) => sum + s.paidArs, 0),
-      sinDefinir: transferenciaSales.sinDefinir.reduce((sum, s) => sum + s.paidArs, 0),
+      Delfi: cuentasBalances.banco.Delfi,
+      Mechi: cuentasBalances.banco.Mechi,
+      sinDefinir: cuentasMedioGross.transferenciaSinDefinir,
     }
 
     const efectivoTotal = efectivoRows.reduce((sum, row) => sum + row.amount, 0)
     const transferenciaTotal = transferencia.Delfi + transferencia.Mechi + transferencia.sinDefinir
 
     return { efectivoRows, transferencia, transferenciaSales, efectivoTotal, transferenciaTotal }
-  }, [sales])
+  }, [cuentasBalances, cuentasMedioGross.transferenciaSinDefinir, sales])
 
   function startEditingInventory() {
     setStockDraft(createStockAllocationDraft(inventoryTableRows))
@@ -1859,103 +1836,6 @@ function HomeScreen({
           <StatCard label="Cajas" sub={`${numberFormatter.format(copiesPerBox)} libros por caja`} value={numberFormatter.format(projectConfig.firstPrintRun.boxes)} />
           <StatCard label="Vendidos" sub={`${numberFormatter.format(availableCopies)} disponibles`} value={numberFormatter.format(paidSoldCopies)} />
           <StatCard label="Ingresos" sub="Suma pagados" value={currencyArsFormatter.format(salesPaidArsTotal)} />
-        </div>
-
-        <div className="ios-card cuentas-card">
-          <SectionTitle eyebrow="CUENTAS" title="Totales por medio de pago" />
-          <p className="cuentas-card-sub">
-            Importe <strong>pagado</strong> en ventas con estado Cobrado (efectivo por vendedora; transferencias por
-            cuenta destino).
-          </p>
-
-          <h4 className="cuentas-subsection-label">EFECTIVO</h4>
-          {cuentasPorMedio.efectivoRows.length === 0 ? (
-            <p className="cuentas-empty">Sin cobros en efectivo.</p>
-          ) : (
-            <>
-              <ul className="cuentas-rows">
-                {cuentasPorMedio.efectivoRows.map(({ seller, amount, sales: bucketSales }) => (
-                  <li className="cuentas-row cuentas-row--tap" key={seller}>
-                    <button
-                      className="cuentas-row-button"
-                      disabled={bucketSales.length === 0}
-                      onClick={() =>
-                        setCuentasMedioSheet({
-                          title: `Efectivo · ${seller}`,
-                          sales: bucketSales,
-                        })
-                      }
-                      type="button"
-                    >
-                      <span>{seller}</span>
-                      <strong>{currencyArsFormatter.format(amount)}</strong>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <div className="cuentas-subtotal">
-                <span>Subtotal efectivo</span>
-                <strong>{currencyArsFormatter.format(cuentasPorMedio.efectivoTotal)}</strong>
-              </div>
-            </>
-          )}
-
-          <h4 className="cuentas-subsection-label">TRANSFERENCIA</h4>
-          <ul className="cuentas-rows">
-            <li className="cuentas-row cuentas-row--tap">
-              <button
-                className="cuentas-row-button"
-                disabled={cuentasPorMedio.transferenciaSales.Delfi.length === 0}
-                onClick={() =>
-                  setCuentasMedioSheet({
-                    title: 'Transferencia · Delfi',
-                    sales: cuentasPorMedio.transferenciaSales.Delfi,
-                  })
-                }
-                type="button"
-              >
-                <span>Delfi</span>
-                <strong>{currencyArsFormatter.format(cuentasPorMedio.transferencia.Delfi)}</strong>
-              </button>
-            </li>
-            <li className="cuentas-row cuentas-row--tap">
-              <button
-                className="cuentas-row-button"
-                disabled={cuentasPorMedio.transferenciaSales.Mechi.length === 0}
-                onClick={() =>
-                  setCuentasMedioSheet({
-                    title: 'Transferencia · Mechi',
-                    sales: cuentasPorMedio.transferenciaSales.Mechi,
-                  })
-                }
-                type="button"
-              >
-                <span>Mechi</span>
-                <strong>{currencyArsFormatter.format(cuentasPorMedio.transferencia.Mechi)}</strong>
-              </button>
-            </li>
-            {cuentasPorMedio.transferencia.sinDefinir > 0 ? (
-              <li className="cuentas-row cuentas-row--tap cuentas-row--warn">
-                <button
-                  className="cuentas-row-button cuentas-row-button--warn"
-                  onClick={() =>
-                    setCuentasMedioSheet({
-                      title: 'Transferencia · Sin cuenta destino',
-                      sales: cuentasPorMedio.transferenciaSales.sinDefinir,
-                    })
-                  }
-                  type="button"
-                >
-                  <span>Sin cuenta destino</span>
-                  <strong>{currencyArsFormatter.format(cuentasPorMedio.transferencia.sinDefinir)}</strong>
-                </button>
-              </li>
-            ) : null}
-          </ul>
-          <div className="cuentas-subtotal">
-            <span>Subtotal transferencias</span>
-            <strong>{currencyArsFormatter.format(cuentasPorMedio.transferenciaTotal)}</strong>
-          </div>
         </div>
 
         <div className="ios-card">
@@ -2061,6 +1941,125 @@ function HomeScreen({
           ) : null}
         </div>
 
+        <div className="ios-card cuentas-card">
+          <div className="cuentas-card-head">
+            <SectionTitle eyebrow="CUENTAS" title="Totales por medio de pago" />
+            <div className="cuentas-card-actions">
+              <button className="row-edit-button" onClick={() => setCuentasSettleOpen(true)} type="button">
+                Saldar cuenta
+              </button>
+              <button className="cuentas-card-link" onClick={() => setCuentasTxOpen(true)} type="button">
+                Ver transacciones
+              </button>
+            </div>
+          </div>
+          <p className="cuentas-card-sub">
+            Saldos disponibles tras ventas <strong>cobradas</strong> (efectivo por vendedora; transferencias por cuenta).
+            Los saldos bajan al confirmar un saldo de cuenta.
+          </p>
+
+          <h4 className="cuentas-subsection-label">EFECTIVO</h4>
+          <ul className="cuentas-rows">
+            {cuentasPorMedio.efectivoRows.map(({ seller, amount, sales: bucketSales }) => (
+              <li className="cuentas-row cuentas-row--tap" key={seller}>
+                <button
+                  className="cuentas-row-button"
+                  disabled={bucketSales.length === 0}
+                  onClick={() =>
+                    setCuentasMedioSheet({
+                      title: `Efectivo · ${seller}`,
+                      sales: bucketSales,
+                    })
+                  }
+                  type="button"
+                >
+                  <span>{seller}</span>
+                  <strong>{currencyArsFormatter.format(amount)}</strong>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="cuentas-subtotal">
+            <span>Subtotal efectivo</span>
+            <strong>{currencyArsFormatter.format(cuentasPorMedio.efectivoTotal)}</strong>
+          </div>
+
+          <h4 className="cuentas-subsection-label">TRANSFERENCIA</h4>
+          <ul className="cuentas-rows">
+            <li className="cuentas-row cuentas-row--tap">
+              <button
+                className="cuentas-row-button"
+                disabled={cuentasPorMedio.transferenciaSales.Delfi.length === 0}
+                onClick={() =>
+                  setCuentasMedioSheet({
+                    title: 'Transferencia · Delfi',
+                    sales: cuentasPorMedio.transferenciaSales.Delfi,
+                  })
+                }
+                type="button"
+              >
+                <span>Delfi</span>
+                <strong>{currencyArsFormatter.format(cuentasPorMedio.transferencia.Delfi)}</strong>
+              </button>
+            </li>
+            <li className="cuentas-row cuentas-row--tap">
+              <button
+                className="cuentas-row-button"
+                disabled={cuentasPorMedio.transferenciaSales.Mechi.length === 0}
+                onClick={() =>
+                  setCuentasMedioSheet({
+                    title: 'Transferencia · Mechi',
+                    sales: cuentasPorMedio.transferenciaSales.Mechi,
+                  })
+                }
+                type="button"
+              >
+                <span>Mechi</span>
+                <strong>{currencyArsFormatter.format(cuentasPorMedio.transferencia.Mechi)}</strong>
+              </button>
+            </li>
+            {cuentasPorMedio.transferencia.sinDefinir > 0 ? (
+              <li className="cuentas-row cuentas-row--tap cuentas-row--warn">
+                <button
+                  className="cuentas-row-button cuentas-row-button--warn"
+                  onClick={() =>
+                    setCuentasMedioSheet({
+                      title: 'Transferencia · Sin cuenta destino',
+                      sales: cuentasPorMedio.transferenciaSales.sinDefinir,
+                    })
+                  }
+                  type="button"
+                >
+                  <span>Sin cuenta destino</span>
+                  <strong>{currencyArsFormatter.format(cuentasPorMedio.transferencia.sinDefinir)}</strong>
+                </button>
+              </li>
+            ) : null}
+          </ul>
+          <div className="cuentas-subtotal">
+            <span>Subtotal transferencias</span>
+            <strong>{currencyArsFormatter.format(cuentasPorMedio.transferenciaTotal)}</strong>
+          </div>
+        </div>
+
+        <LiquidacionesVentasCard
+          cuentasBalances={cuentasBalances}
+          cuentasOperations={cuentasOperations}
+          formatArs={(n) => currencyArsFormatter.format(n)}
+          formatDateTime={(iso) =>
+            new Intl.DateTimeFormat('es-AR', {
+              dateStyle: 'medium',
+              timeStyle: 'short',
+            }).format(new Date(iso))
+          }
+          saldadoArs={wonkySaldadoArs}
+          ejemplaresSaldados={wonkyEjemplaresSaldados}
+          ejemplaresVendidos={paidSoldCopies}
+          wonkyPorEjemplarArs={WONKY_ARS_PER_VENTA_COPY}
+          wonkySettlements={wonkyLiquidacionRows}
+          onSettleEjemplares={(input) => onWonkyEjemplaresSettlement(input, cuentasBalances)}
+        />
+
         <div className="ios-card dashboard-split-card">
           <div className="dashboard-split-card-head">
             <SectionTitle eyebrow="Liquidacion" title="ABRAZANDOCUENTOS" />
@@ -2149,39 +2148,7 @@ function HomeScreen({
           </table>
         </div>
 
-        <LiquidacionesVentasCard
-          explainDetail={
-            <>
-              Solo cuentan ventas principales con <strong>payment_status</strong>{' '}
-              <strong>cobrado</strong> o <strong>parcial</strong> en la base (sin encargos). El importe destacado suma el{' '}
-              <strong>total de la venta</strong> en cobradas y el <strong>monto ya abonado</strong> en parciales. Wonky
-              retiene {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY)} por cada ejemplar contado en la tarjeta{' '}
-              <strong>Vendidos</strong> (todas las ventas con ese mismo criterio de estado:{' '}
-              {numberFormatter.format(paidSoldCopies)} u. →{' '}
-              {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY * paidSoldCopies)}). Cada socia (Delfi, Mechi, Susan)
-              suma{' '}
-              <strong>
-                (total liquidación − parte Wonky) / 3 = (
-                {currencyArsFormatter.format(ventasLiquidacionCobradoArs)} −{' '}
-                {currencyArsFormatter.format(WONKY_ARS_PER_VENTA_COPY * paidSoldCopies)}) / 3
-              </strong>
-              . <strong>Abrazandocuentos</strong> no participa de esta tabla (queda en ABRAZANDOCUENTOS).
-            </>
-          }
-          explainExpanded={ventasMambulaNoteOpen}
-          formatArs={(n) => currencyArsFormatter.format(n)}
-          onSaldar={(p) => {
-            const row = partnerGainRows.find((r) => r.partner === p.nombre)
-            if (row) {
-              setSettleRow(row)
-            }
-          }}
-          onToggleExplain={() => setVentasMambulaNoteOpen((open) => !open)}
-          participantes={liquidacionesParticipantes}
-          totalCobradoArs={ventasLiquidacionCobradoArs}
-          ejemplaresVendidos={paidSoldCopies}
-          wonkyPorLibroArs={WONKY_ARS_PER_VENTA_COPY}
-        />
+
 
         <ProfitCard
           socias={sociasProfitRows.map((row) => ({
@@ -2243,20 +2210,29 @@ function HomeScreen({
           <AbrValoresSheet abrSplit={abrSplit} onClose={() => setAbrValoresSheetOpen(false)} />
         ) : null}
 
-        {settleRow ? (
-          <PartnerSettlementSheet
-            key={`${settleRow.partner}-${settlementsTotalForPartner(partnerSettlements, settleRow.partner)}-${partnerSettlements.length}`}
-            breakdown={settleRow}
-            partnerSettlements={partnerSettlements}
-            onClose={() => setSettleRow(null)}
-            onSubmit={async (amountArs, settledOn) => {
-              await savePartnerSettlement({
-                partner: settleRow.partner,
-                amountArs,
-                settledOn,
-              })
-              setSettleRow(null)
+        {cuentasSettleOpen ? (
+          <CuentasMedioSettlementModal
+            balances={cuentasBalances}
+            formatArs={(value) => currencyArsFormatter.format(value)}
+            onClose={() => setCuentasSettleOpen(false)}
+            onConfirm={async (result, settledOn) => {
+              await onCuentasSettlementApplied(result, settledOn)
+              setCuentasSettleOpen(false)
             }}
+          />
+        ) : null}
+
+        {cuentasTxOpen ? (
+          <CuentasMedioTransactionsSheet
+            formatArs={(value) => currencyArsFormatter.format(value)}
+            formatDateTime={(iso) =>
+              new Intl.DateTimeFormat('es-AR', {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+              }).format(new Date(iso))
+            }
+            onClose={() => setCuentasTxOpen(false)}
+            operations={cuentasOperations}
           />
         ) : null}
       </div>

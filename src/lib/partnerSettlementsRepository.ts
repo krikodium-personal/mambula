@@ -1,4 +1,5 @@
-import type { PartnerSettlement, SplitPartnerKey } from '../types'
+import { isWonkyEjemplaresScope } from './wonkySettlement'
+import type { PartnerSettlement, PartnerSettlementScope, SplitPartnerKey } from '../types'
 import { supabase } from './supabase'
 
 const STORAGE_KEY = 'mambula_partner_settlements_v1'
@@ -9,15 +10,29 @@ type SettlementRow = {
   amount_ars: number
   settled_on: string
   created_at: string
+  scope?: string | null
+  operation_id?: string | null
 }
 
 function mapRow(row: SettlementRow): PartnerSettlement {
+  const scopeRaw = row.scope ?? 'liquidacion'
+  let scope: PartnerSettlement['scope']
+  if (scopeRaw === 'cuentas_medio') {
+    scope = 'cuentas_medio'
+  } else if (isWonkyEjemplaresScope(scopeRaw)) {
+    scope = scopeRaw
+  } else {
+    scope = 'liquidacion'
+  }
+
   return {
     id: row.id,
     partner: row.partner as SplitPartnerKey,
     amountArs: Number(row.amount_ars),
     settledOn: row.settled_on,
     createdAt: row.created_at,
+    scope,
+    operationId: row.operation_id ?? null,
   }
 }
 
@@ -43,7 +58,7 @@ export async function loadPartnerSettlements(): Promise<PartnerSettlement[]> {
 
   const { data, error } = await supabase
     .from('partner_settlements')
-    .select('id, partner, amount_ars, settled_on, created_at')
+    .select('id, partner, amount_ars, settled_on, created_at, scope, operation_id')
     .order('settled_on', { ascending: false })
     .order('created_at', { ascending: false })
 
@@ -58,9 +73,13 @@ export type PartnerSettlementInput = {
   partner: SplitPartnerKey
   amountArs: number
   settledOn: string
+  scope?: PartnerSettlementScope | string
+  operationId?: string
 }
 
 export async function createPartnerSettlement(input: PartnerSettlementInput): Promise<PartnerSettlement> {
+  const scope = input.scope ?? 'liquidacion'
+
   if (!supabase) {
     const row: PartnerSettlement = {
       id: crypto.randomUUID(),
@@ -68,6 +87,8 @@ export async function createPartnerSettlement(input: PartnerSettlementInput): Pr
       amountArs: input.amountArs,
       settledOn: input.settledOn,
       createdAt: new Date().toISOString(),
+      scope,
+      operationId: input.operationId ?? null,
     }
     const next = [row, ...readLocal()]
     writeLocal(next)
@@ -80,8 +101,10 @@ export async function createPartnerSettlement(input: PartnerSettlementInput): Pr
       partner: input.partner,
       amount_ars: input.amountArs,
       settled_on: input.settledOn,
+      scope,
+      operation_id: input.operationId ?? null,
     })
-    .select('id, partner, amount_ars, settled_on, created_at')
+    .select('id, partner, amount_ars, settled_on, created_at, scope, operation_id')
     .single()
 
   if (error) {

@@ -63,12 +63,17 @@ export type SaleBreakdown = {
 
 export type SplitPartnerKey = 'Delfi' | 'Mechi' | 'Susan' | 'Wonky'
 
+export type PartnerSettlementScope = 'liquidacion' | 'cuentas_medio'
+
 export type PartnerSettlement = {
   id: string
   partner: SplitPartnerKey
   amountArs: number
   settledOn: string
   createdAt: string
+  /** `liquidacion` | `cuentas_medio`, o cantidad de ejemplares (string numérica) para saldos Wonky. */
+  scope?: PartnerSettlementScope | string
+  operationId?: string | null
 }
 
 export type PartnerGainBreakdown = {
