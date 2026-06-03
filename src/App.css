@@ -3193,3 +3193,173 @@ button.stat-card.stat-card--clickable {
   color: #d4380d;
 }
 
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.skeleton-box {
+  animation: skeleton-pulse 1.25s ease-in-out infinite;
+  background: var(--gray-fill-2);
+  border-radius: 8px;
+  display: block;
+}
+
+.skeleton-line {
+  height: 12px;
+}
+
+.skeleton-line-xs {
+  max-width: 56px;
+  width: 40%;
+}
+
+.skeleton-line-sm {
+  max-width: 120px;
+  width: 55%;
+}
+
+.skeleton-line-md {
+  max-width: 180px;
+  width: 72%;
+}
+
+.skeleton-line-lg {
+  height: 22px;
+  max-width: 96px;
+  width: 48%;
+}
+
+.skeleton-line-xl {
+  height: 34px;
+  max-width: 140px;
+  width: 56%;
+}
+
+.skeleton-line-right {
+  margin-left: auto;
+}
+
+.screen-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skeleton-stat-card {
+  pointer-events: none;
+}
+
+.skeleton-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.skeleton-card-eyebrow {
+  width: 72px;
+}
+
+.skeleton-card-title {
+  width: 62%;
+}
+
+.skeleton-card-row {
+  width: 100%;
+}
+
+.skeleton-sync-badge {
+  border-radius: 999px;
+  height: 28px;
+  width: 220px;
+}
+
+.skeleton-search-box {
+  pointer-events: none;
+}
+
+.skeleton-search-icon {
+  border-radius: 50%;
+  flex-shrink: 0;
+  height: 18px;
+  width: 18px;
+}
+
+.skeleton-search-input {
+  flex: 1;
+  height: 18px;
+}
+
+.skeleton-list-group {
+  pointer-events: none;
+}
+
+.skeleton-list-row {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 14px 16px;
+}
+
+.skeleton-list-row-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.skeleton-list-row.last {
+  border-bottom: 0;
+}
+
+.skeleton-inventory-table {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.skeleton-inventory-head,
+.skeleton-inventory-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1.4fr 0.8fr 0.8fr;
+}
+
+.skeleton-promo-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton-promo-title {
+  margin: 4px 4px 0;
+}
+
+.skeleton-total-card {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.skeleton-expense-group .group-title {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.payer-stats .skeleton-stat-card,
+.stats-row .skeleton-stat-card,
+.kpi-grid .skeleton-stat-card {
+  min-height: 84px;
+}
+

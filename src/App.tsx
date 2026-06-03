@@ -15,6 +15,13 @@ import CuentasMedioTransactionsSheet from './components/CuentasMedioTransactions
 import LiquidacionesVentasCard from './components/LiquidacionesVentasCard'
 import ProfitCard from './components/ProfitCard'
 import {
+  EncargosScreenSkeleton,
+  GastosScreenSkeleton,
+  HomeScreenSkeleton,
+  PromocionalesScreenSkeleton,
+  VentasScreenSkeleton,
+} from './components/ScreenSkeletons'
+import {
   computeCuentasMedioGrossFromSales,
   CUENTAS_SOCIAS,
   type CuentasMedioBalances,
@@ -253,6 +260,10 @@ function App() {
   const [cuentasOperations, setCuentasOperations] = useState<CuentasSettlementOperation[]>([])
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [loading, setLoading] = useState(isSupabaseConfigured)
+  const [expensesLoading, setExpensesLoading] = useState(isSupabaseConfigured)
+  const [promoLoading, setPromoLoading] = useState(isSupabaseConfigured)
+  const [partnerSettlementsLoading, setPartnerSettlementsLoading] = useState(isSupabaseConfigured)
+  const [cuentasOperationsLoading, setCuentasOperationsLoading] = useState(isSupabaseConfigured)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
   const [mechiCopyStatus, setMechiCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
@@ -278,6 +289,7 @@ function App() {
   useEffect(() => {
     if (!isSupabaseConfigured) return
     let cancelled = false
+    setPromoLoading(true)
 
     void fetchPromoRowsFromSupabase(promoData as PromoRowsStored)
       .then((rows) => {
@@ -291,6 +303,7 @@ function App() {
       .finally(() => {
         if (!cancelled) {
           setPromoRemoteSaveEnabled(true)
+          setPromoLoading(false)
         }
       })
 
@@ -342,6 +355,9 @@ function App() {
 
   useEffect(() => {
     let ignore = false
+    if (isSupabaseConfigured) {
+      setExpensesLoading(true)
+    }
 
     loadExpenses()
       .then((rows) => {
@@ -354,6 +370,11 @@ function App() {
           setExpenses([])
         }
       })
+      .finally(() => {
+        if (!ignore && isSupabaseConfigured) {
+          setExpensesLoading(false)
+        }
+      })
 
     return () => {
       ignore = true
@@ -362,6 +383,9 @@ function App() {
 
   useEffect(() => {
     let ignore = false
+    if (isSupabaseConfigured) {
+      setPartnerSettlementsLoading(true)
+    }
 
     loadPartnerSettlements()
       .then((rows) => {
@@ -374,6 +398,11 @@ function App() {
           setPartnerSettlements([])
         }
       })
+      .finally(() => {
+        if (!ignore && isSupabaseConfigured) {
+          setPartnerSettlementsLoading(false)
+        }
+      })
 
     return () => {
       ignore = true
@@ -382,6 +411,9 @@ function App() {
 
   useEffect(() => {
     let ignore = false
+    if (isSupabaseConfigured) {
+      setCuentasOperationsLoading(true)
+    }
 
     loadCuentasSettlementOperations()
       .then((rows) => {
@@ -389,6 +421,11 @@ function App() {
       })
       .catch(() => {
         if (!ignore) setCuentasOperations([])
+      })
+      .finally(() => {
+        if (!ignore && isSupabaseConfigured) {
+          setCuentasOperationsLoading(false)
+        }
       })
 
     return () => {
@@ -842,6 +879,10 @@ function App() {
     selectedSale && editingSaleId && saleDraft && selectedSale.id === editingSaleId && !createDraft,
   )
 
+  const homeLoading =
+    isSupabaseConfigured &&
+    (loading || expensesLoading || partnerSettlementsLoading || cuentasOperationsLoading)
+
   return (
     <main className="ios-app">
       {tab === 'home' ? (
@@ -856,7 +897,7 @@ function App() {
           expenses={expenses}
           salesPaidArsTotal={salesPaidArsTotal}
           loadError={loadError}
-          loading={loading}
+          loading={homeLoading}
           onAcSchemeSaleDelete={handleAcSchemeSaleDelete}
           onAcSchemeSaleSubmit={handleAcSchemeSaleSubmit}
           onOpenSaleFromCuentas={handleOpenSaleFromCuentas}
@@ -901,9 +942,11 @@ function App() {
         />
       ) : null}
       {tab === 'promo' ? (
-        <PromocionalesScreen promoRows={promoRows} setPromoRows={setPromoRows} />
+        <PromocionalesScreen loading={promoLoading} promoRows={promoRows} setPromoRows={setPromoRows} />
       ) : null}
-      {tab === 'gastos' ? <GastosScreen expenses={expenses} setExpenses={setExpenses} /> : null}
+      {tab === 'gastos' ? (
+        <GastosScreen expenses={expenses} loading={expensesLoading} setExpenses={setExpenses} />
+      ) : null}
 
       {selectedSale && !saleEditSheetOpen ? (
         saleDetailEncargoSummary ? (
@@ -1797,6 +1840,10 @@ function HomeScreen({
           <span className="muted-label">Alias para transferencias de ventas</span>
         </div>
 
+        {loading ? (
+          <HomeScreenSkeleton />
+        ) : (
+          <>
         <div className="sync-badge">
           <span className={loadError ? 'sync-dot error' : 'sync-dot'} />
           {loadError
@@ -2151,6 +2198,9 @@ function HomeScreen({
           </div>
         ) : null}
 
+          </>
+        )}
+
         {cuentasMedioSheet ? (
           <CuentasMedioDetailSheet
             onClose={() => setCuentasMedioSheet(null)}
@@ -2229,15 +2279,6 @@ function ventasPaymentMethodLabel(method: Sale['paymentMethod']): string {
   if (method === null || method === undefined) return 'Sin definir'
 
   return VENTAS_PAYMENT_METHOD_LABELS[method]
-}
-
-function ScreenListLoading({ label = 'Cargando…' }: { label?: string }) {
-  return (
-    <div className="screen-list-loading" role="status" aria-live="polite">
-      <span aria-hidden="true" className="screen-list-loading-spinner" />
-      <span className="screen-list-loading-label">{label}</span>
-    </div>
-  )
 }
 
 function VentasScreen({
@@ -2378,6 +2419,10 @@ function VentasScreen({
         }
       />
 
+      {loading ? (
+        <VentasScreenSkeleton />
+      ) : (
+        <>
       <div className="search-box">
         <Icon name="search" />
         <input
@@ -2477,11 +2522,11 @@ function VentasScreen({
         ))}
       </div>
 
-      {loading && filteredSales.length === 0 ? (
-        <ScreenListLoading />
-      ) : filteredSales.length === 0 ? (
+      {filteredSales.length === 0 ? (
         <p className="empty-message">Sin resultados</p>
       ) : null}
+        </>
+      )}
 
       {filterSheetOpen ? (
         <VentasFilterSheet
@@ -2669,6 +2714,10 @@ function EncargosScreen({
         subtitle={`Sin entregar ni cobrar · ${sales.length} ${sales.length === 1 ? 'registro' : 'registros'} · Por cobrar ${formatCompact(pendingEncargosArs)}`}
       />
 
+      {loading ? (
+        <EncargosScreenSkeleton />
+      ) : (
+        <>
       <div className="search-box">
         <Icon name="search" />
         <input
@@ -2718,11 +2767,11 @@ function EncargosScreen({
         ))}
       </div>
 
-      {loading && filteredSales.length === 0 ? (
-        <ScreenListLoading />
-      ) : filteredSales.length === 0 ? (
+      {filteredSales.length === 0 ? (
         <p className="empty-message">{sales.length === 0 ? 'Sin encargos activos' : 'Sin resultados'}</p>
       ) : null}
+        </>
+      )}
     </section>
   )
 }
@@ -3447,9 +3496,11 @@ function SaleDraftSheet({
   )
 }
 function PromocionalesScreen({
+  loading,
   promoRows,
   setPromoRows,
 }: {
+  loading: boolean
   promoRows: PromoRowsStored
   setPromoRows: Dispatch<SetStateAction<PromoRowsStored>>
 }) {
@@ -3581,6 +3632,10 @@ function PromocionalesScreen({
         title="Promocionales"
         subtitle="Ejemplares entregados al equipo, colaboradores, colegios e influencers."
       />
+      {loading ? (
+        <PromocionalesScreenSkeleton />
+      ) : (
+        <>
       <div className="stats-row">
         <button
           className={filter === 'todos' ? 'stat-card promo-filter-card selected' : 'stat-card promo-filter-card'}
@@ -3639,6 +3694,8 @@ function PromocionalesScreen({
         onEditRow={(group, nombre) => setPromoEditTarget({ group, nombre })}
         onPromoCheckTap={handlePromoCheckTap}
       />
+        </>
+      )}
       {promoEditTarget && promoEditRow ? (
         <PromoEditSheet
           key={`${promoEditTarget.group}-${promoEditTarget.nombre}`}
@@ -3682,9 +3739,11 @@ function PromocionalesScreen({
 
 function GastosScreen({
   expenses,
+  loading,
   setExpenses,
 }: {
   expenses: Expense[]
+  loading: boolean
   setExpenses: Dispatch<SetStateAction<Expense[]>>
 }) {
   const [filter, setFilter] = useState('todos')
@@ -3749,6 +3808,10 @@ function GastosScreen({
         title="Gastos"
         subtitle="Producción, honorarios, imprenta y costos asociados al proyecto."
       />
+      {loading ? (
+        <GastosScreenSkeleton />
+      ) : (
+        <>
       <div className="ios-card big-total-card">
         <span>Total invertido</span>
         <strong>{currencyUsdFormatter.format(totalUsd)}</strong>
@@ -3794,6 +3857,8 @@ function GastosScreen({
           </div>
         </div>
       ))}
+        </>
+      )}
       {expenseDraft ? (
         <NewExpenseSheet
           draft={expenseDraft}
