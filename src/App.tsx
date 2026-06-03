@@ -43,6 +43,11 @@ import { getSalePending, getSaleStatus, getSaleTotal } from './lib/saleFinancial
 import { loadPromoRows, savePromoRows, type PromoRowStored, type PromoRowsStored } from './lib/promocionalesStorage'
 import { fetchPromoRowsFromSupabase, savePromoRowsRemote } from './lib/promocionalesRepository'
 import { isSupabaseConfigured } from './lib/supabase'
+import {
+  createExpense,
+  loadExpenses,
+  type Expense,
+} from './lib/expensesRepository'
 import { createPartnerSettlement, loadPartnerSettlements } from './lib/partnerSettlementsRepository'
 import {
   wonkyLiquidacionSaldadoArs,
@@ -146,15 +151,6 @@ type ExpenseDraft = {
   usd: string
   payer: string
 }
-type Expense = {
-  year: number
-  month: string
-  concept: string
-  pesos: number | null
-  rate: number | null
-  usd: number
-  payer: string
-}
 
 const sociasProfitOrder = ['Delfi', 'Mechi', 'Susan'] as const satisfies readonly SplitPartnerKey[]
 
@@ -250,53 +246,12 @@ const promoData = {
   colegio: [],
 }
 
-const gastosData: Expense[] = [
-  { year: 2024, month: 'Septiembre', concept: 'Pistas Andres', pesos: 51800, rate: 1295, usd: 40, payer: 'Susan' },
-  { year: 2024, month: 'Septiembre', concept: 'Pistas Andres', pesos: 51800, rate: 1295, usd: 40, payer: 'Delfi' },
-  { year: 2024, month: 'Septiembre', concept: 'Pistas Andres', pesos: 51800, rate: 1295, usd: 40, payer: 'Mechi' },
-  { year: 2024, month: 'Octubre', concept: 'Gestora', pesos: 75000, rate: 1170, usd: 64, payer: 'Delfi' },
-  { year: 2025, month: 'Marzo', concept: 'Adelanto Diego', pesos: 244000, rate: 1220, usd: 200, payer: 'Delfi' },
-  { year: 2025, month: 'Marzo', concept: 'Registro Sadaic', pesos: 90822, rate: 1220, usd: 75, payer: 'Mechi' },
-  { year: 2025, month: 'Abril', concept: 'Adelantó Diego', pesos: 267000, rate: 1335, usd: 200, payer: 'Susan' },
-  { year: 2025, month: 'Abril', concept: 'Adelantó Diego', pesos: 133500, rate: 1335, usd: 100, payer: 'Mechi' },
-  { year: 2025, month: 'Junio', concept: 'Adelanto Diego', pesos: 117000, rate: 1170, usd: 100, payer: 'Delfi' },
-  { year: 2025, month: 'Junio', concept: 'Gestora', pesos: 100000, rate: 1170, usd: 85, payer: 'Mechi' },
-  { year: 2025, month: 'Junio', concept: 'Honorarios Mery', pesos: 250000, rate: 1170, usd: 214, payer: 'Susan' },
-  { year: 2025, month: 'Junio', concept: 'Honorarios Belu', pesos: 250000, rate: 1170, usd: 214, payer: 'Mechi' },
-  { year: 2025, month: 'Agosto', concept: 'Honorarios Diego saldo', pesos: null, rate: null, usd: 200, payer: 'Mechi' },
-  { year: 2025, month: 'Agosto', concept: 'Honorarios Diego saldo', pesos: null, rate: null, usd: 300, payer: 'Delfi' },
-  { year: 2025, month: 'Septiembre', concept: 'Gerard', pesos: 20000, rate: 1400, usd: 14, payer: 'Susan' },
-  { year: 2025, month: 'Septiembre', concept: 'Gerard', pesos: 75000, rate: 1445, usd: 52, payer: 'Susan' },
-  { year: 2025, month: 'Diciembre', concept: 'Estudio Barbosa', pesos: 75000, rate: 1475, usd: 51, payer: 'Susan' },
-  { year: 2026, month: 'Enero', concept: 'Gerard saldo', pesos: 65000, rate: 1520, usd: 43, payer: 'Susan' },
-  { year: 2026, month: 'Enero', concept: 'Coco grabacion', pesos: 20000, rate: 1495, usd: 13, payer: 'Delfi' },
-  { year: 2026, month: 'Enero', concept: 'Magda grabacion', pesos: 100000, rate: 1490, usd: 67, payer: 'Mechi' },
-  { year: 2026, month: 'Enero', concept: 'Vane grabacion', pesos: 15000, rate: 1495, usd: 10, payer: 'Delfi' },
-  { year: 2026, month: 'Enero', concept: 'Susan/Agus grabacion', pesos: 75000, rate: 1480, usd: 50, payer: 'Susan' },
-  { year: 2026, month: 'Marzo', concept: 'ISBN', pesos: 36500, rate: 1415, usd: 26, payer: 'Delfi' },
-  { year: 2026, month: 'Marzo', concept: 'ISBN', pesos: 30500, rate: 1410, usd: 21, payer: 'Delfi' },
-  { year: 2026, month: 'Marzo', concept: 'Imprenta x 2000', pesos: 882090, rate: 1405, usd: 628, payer: 'Delfi' },
-  { year: 2026, month: 'Marzo', concept: 'Imprenta x 2000', pesos: 882090, rate: 1405, usd: 628, payer: 'Susan' },
-  { year: 2026, month: 'Marzo', concept: 'Imprenta x 2000', pesos: 882090, rate: 1405, usd: 628, payer: 'Mechi' },
-  { year: 2026, month: 'Marzo', concept: 'Grabación gotita', pesos: 100000, rate: 1405, usd: 71, payer: 'Delfi' },
-  { year: 2026, month: 'Abril', concept: 'Grabación pasa', pesos: 50000, rate: 1395, usd: 36, payer: 'Delfi' },
-  { year: 2026, month: 'Abril', concept: 'Grabación pasa', pesos: 120000, rate: 1410, usd: 85, payer: 'Susan' },
-  { year: 2026, month: 'Abril', concept: 'Saldo imprenta', pesos: 680901, rate: 1420, usd: 480, payer: 'Susan' },
-  { year: 2026, month: 'Abril', concept: 'Saldo imprenta', pesos: 680901, rate: 1420, usd: 480, payer: 'Delfi' },
-  { year: 2026, month: 'Abril', concept: 'Saldo imprenta', pesos: 680901, rate: 1420, usd: 480, payer: 'Mechi' },
-  { year: 2026, month: 'Abril', concept: 'Cap cut', pesos: 21300, rate: 1420, usd: 15, payer: 'Delfi' },
-  { year: 2026, month: 'Abril', concept: 'Diego extras', pesos: 156510, rate: 1410, usd: 111, payer: 'Mechi' },
-  { year: 2026, month: 'Abril', concept: 'Diego extras', pesos: 201630, rate: 1410, usd: 143, payer: 'Susan' },
-  { year: 2026, month: 'Abril', concept: 'Folios x 1500', pesos: 61275, rate: 1390, usd: 44, payer: 'Delfi' },
-  { year: 2026, month: 'Abril', concept: 'Stickers logo', pesos: 104400, rate: 1390, usd: 75, payer: 'Delfi' },
-]
-
 function App() {
   const [tab, setTab] = useState<AppTab>(() => getTabFromLocation())
   const [ventasData, setVentasData] = useState<VentasData>(fallbackVentasData)
   const [partnerSettlements, setPartnerSettlements] = useState<PartnerSettlement[]>([])
   const [cuentasOperations, setCuentasOperations] = useState<CuentasSettlementOperation[]>([])
-  const [expenses, setExpenses] = useState<Expense[]>(() => [...gastosData])
+  const [expenses, setExpenses] = useState<Expense[]>([])
   const [loading, setLoading] = useState(isSupabaseConfigured)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
@@ -379,6 +334,26 @@ function App() {
     }
 
     fetchVentasData()
+
+    return () => {
+      ignore = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let ignore = false
+
+    loadExpenses()
+      .then((rows) => {
+        if (!ignore) {
+          setExpenses(rows)
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setExpenses([])
+        }
+      })
 
     return () => {
       ignore = true
@@ -3715,16 +3690,11 @@ function GastosScreen({
   const [filter, setFilter] = useState('todos')
   const [expenseDraft, setExpenseDraft] = useState<ExpenseDraft | null>(null)
   const [expenseError, setExpenseError] = useState<string | null>(null)
+  const [savingExpense, setSavingExpense] = useState(false)
   const filtered = filter === 'todos' ? expenses : expenses.filter((item) => item.payer === filter)
-  const expenseIndexMap = useMemo(() => {
-    const map = new Map<Expense, number>()
-    expenses.forEach((item, index) => map.set(item, index))
-
-    return map
-  }, [expenses])
   const sortedFiltered = useMemo(
-    () => [...filtered].sort((a, b) => compareExpensesNewestFirst(a, b, expenseIndexMap)),
-    [filtered, expenseIndexMap],
+    () => [...filtered].sort(compareExpensesNewestFirst),
+    [filtered],
   )
   const totalUsd = expenses.reduce((sum, item) => sum + item.usd, 0)
   const totalPesos = expenses.reduce((sum, item) => sum + (item.pesos ?? 0), 0)
@@ -3740,8 +3710,8 @@ function GastosScreen({
   })
   const groups = groupBy(sortedFiltered, (item) => `${item.month} ${item.year}`)
 
-  function saveExpense() {
-    if (!expenseDraft) return
+  async function saveExpense() {
+    if (!expenseDraft || savingExpense) return
 
     const concept = expenseDraft.concept.trim()
     const usd = parseOptionalNumber(expenseDraft.usd) ?? 0
@@ -3751,19 +3721,25 @@ function GastosScreen({
       return
     }
 
-    setExpenses((current) => [
-      ...current,
-      {
+    setSavingExpense(true)
+    setExpenseError(null)
+
+    try {
+      const row = await createExpense({
         concept,
         pesos: parseOptionalNumber(expenseDraft.pesos),
         rate: parseOptionalNumber(expenseDraft.rate),
         usd,
         payer: expenseDraft.payer,
         ...getCurrentExpenseDate(),
-      },
-    ])
-    setExpenseDraft(null)
-    setExpenseError(null)
+      })
+      setExpenses((current) => [row, ...current])
+      setExpenseDraft(null)
+    } catch (error) {
+      setExpenseError(error instanceof Error ? error.message : 'No se pudo guardar el gasto.')
+    } finally {
+      setSavingExpense(false)
+    }
   }
 
   return (
@@ -3800,7 +3776,7 @@ function GastosScreen({
           </div>
           <div className="list-group">
             {rows.map((item, index) => (
-              <div className={`expense-row ${index === rows.length - 1 ? 'last' : ''}`} key={`${item.concept}-${index}`}>
+              <div className={`expense-row ${index === rows.length - 1 ? 'last' : ''}`} key={item.id}>
                 <div>
                   <strong>{item.concept}</strong>
                   <p>
@@ -3826,7 +3802,8 @@ function GastosScreen({
             setExpenseDraft(null)
             setExpenseError(null)
           }}
-          onSave={saveExpense}
+          onSave={() => void saveExpense()}
+          saving={savingExpense}
           setDraft={setExpenseDraft}
         />
       ) : null}
@@ -4124,12 +4101,14 @@ function NewExpenseSheet({
   error,
   onClose,
   onSave,
+  saving = false,
   setDraft,
 }: {
   draft: ExpenseDraft
   error: string | null
   onClose: () => void
   onSave: () => void
+  saving?: boolean
   setDraft: (draft: ExpenseDraft) => void
 }) {
   function updatePesos(pesos: string) {
@@ -4191,8 +4170,10 @@ function NewExpenseSheet({
           </div>
           {error ? <p className="edit-error">{error}</p> : null}
           <div className="edit-actions">
-            <button className="secondary-button" onClick={onClose} type="button">Cancelar</button>
-            <button className="primary-button green" onClick={onSave} type="button">Crear gasto</button>
+            <button className="secondary-button" disabled={saving} onClick={onClose} type="button">Cancelar</button>
+            <button className="primary-button green" disabled={saving} onClick={onSave} type="button">
+              {saving ? 'Guardando…' : 'Crear gasto'}
+            </button>
           </div>
         </div>
       </div>
@@ -4765,12 +4746,12 @@ function expenseMonthIndex(month: string): number {
   return EXPENSE_MONTH_INDEX[month] ?? 0
 }
 
-function compareExpensesNewestFirst(a: Expense, b: Expense, indexByExpense: Map<Expense, number>): number {
+function compareExpensesNewestFirst(a: Expense, b: Expense): number {
   if (b.year !== a.year) return b.year - a.year
   const monthDelta = expenseMonthIndex(b.month) - expenseMonthIndex(a.month)
   if (monthDelta !== 0) return monthDelta
 
-  return (indexByExpense.get(b) ?? 0) - (indexByExpense.get(a) ?? 0)
+  return b.createdAt.localeCompare(a.createdAt)
 }
 
 function getTabFromLocation(): AppTab {
