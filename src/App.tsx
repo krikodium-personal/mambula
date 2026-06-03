@@ -1329,6 +1329,10 @@ function AcSchemeSalesListSheet({
   )
 }
 
+function formatSharePercent(share: number): string {
+  return `${Math.round(share * 100)}%`
+}
+
 function AbrValoresSheet({
   abrSplit,
   onClose,
@@ -1354,15 +1358,15 @@ function AbrValoresSheet({
             <tbody>
               <tr>
                 <td>% Abrazando cuentos</td>
-                <td>{`${abrSplit.pctAbrazandoCuentos * 100}%`}</td>
+                <td>{formatSharePercent(abrSplit.pctAbrazandoCuentos)}</td>
               </tr>
               <tr>
                 <td>% Wonky</td>
-                <td>{`${abrSplit.pctWonky * 100}%`}</td>
+                <td>{formatSharePercent(abrSplit.pctWonky)}</td>
               </tr>
               <tr>
                 <td>% Socias (pool)</td>
-                <td>{`${abrSplit.pctSociasPool * 100}%`}</td>
+                <td>{formatSharePercent(abrSplit.pctSociasPool)}</td>
               </tr>
               <tr>
                 <td>Costo por libro</td>
@@ -3767,7 +3771,12 @@ function GastosScreen({
       usd: items.reduce((sum, item) => sum + item.usd, 0),
     }
   })
-  const groups = groupBy(sortedFiltered, (item) => `${item.month} ${item.year}`)
+  const groups = useMemo((): Array<[string, Expense[]]> => {
+    return groupBy(sortedFiltered, (item) => `${item.month} ${item.year}`).map(([month, rows]) => [
+      month,
+      sortExpensesWithinMonthGroup(rows),
+    ])
+  }, [sortedFiltered])
 
   async function saveExpense() {
     if (!expenseDraft || savingExpense) return
@@ -4816,7 +4825,21 @@ function compareExpensesNewestFirst(a: Expense, b: Expense): number {
   const monthDelta = expenseMonthIndex(b.month) - expenseMonthIndex(a.month)
   if (monthDelta !== 0) return monthDelta
 
-  return b.createdAt.localeCompare(a.createdAt)
+  const createdDelta = b.createdAt.localeCompare(a.createdAt)
+  if (createdDelta !== 0) return createdDelta
+
+  return b.id.localeCompare(a.id)
+}
+
+function sortExpensesWithinMonthGroup(rows: Expense[]): Expense[] {
+  const indexById = new Map(rows.map((row, index) => [row.id, index]))
+
+  return [...rows].sort((a, b) => {
+    const createdDelta = b.createdAt.localeCompare(a.createdAt)
+    if (createdDelta !== 0) return createdDelta
+
+    return (indexById.get(b.id) ?? 0) - (indexById.get(a.id) ?? 0)
+  })
 }
 
 function getTabFromLocation(): AppTab {

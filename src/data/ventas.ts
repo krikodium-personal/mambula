@@ -8,7 +8,7 @@ export const projectConfig: ProjectConfig = {
     boxes: 50,
   },
   costRules: {
-    abrazandoCuentosShare: 0.5,
+    abrazandoCuentosShare: 0.55,
     wonkyShare: 0.05,
     bookCostUsd: 3,
   },
