@@ -186,6 +186,15 @@
   gap: 10px;
 }
 
+.app-version-footer {
+  margin-top: 4px;
+  padding: 8px 0 4px;
+  text-align: center;
+  color: var(--label-4);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
 .ios-card,
 .stat-card,
 .sync-badge {

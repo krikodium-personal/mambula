@@ -1,0 +1,22 @@
+---
+description: Subir versión de la app en cada commit o push
+alwaysApply: true
+---
+
+# Versión de Mambula
+
+- La versión vive en `package.json` y se muestra en el Home (`vX.Y.Z` vía `src/lib/appVersion.ts`).
+- **Antes de cada commit o push**, incrementá la versión con `npm run version:patch` (por defecto).
+- Incluí siempre `package.json` en el commit junto con el resto de los cambios.
+- Usá `npm run version:minor` o `npm run version:major` solo si el usuario pide un release mayor o una feature notable.
+
+## Hooks locales (opcional)
+
+Para automatizar el patch en cada commit:
+
+```sh
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-commit
+```
+
+Para saltar el bump una vez: `SKIP_VERSION_BUMP=1 git commit ...`

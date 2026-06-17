@@ -1,3 +1,4 @@
+import { APP_VERSION } from './lib/appVersion'
 import './App.css'
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import {
@@ -1769,6 +1770,7 @@ function HomeScreen({
             operations={cuentasOperations}
           />
         ) : null}
+        <p className="app-version-footer">v{APP_VERSION}</p>
       </div>
     </section>
   )
