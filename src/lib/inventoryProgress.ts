@@ -1,4 +1,5 @@
 import type { Sale } from '../types'
+import { AC_STOCK_NAME } from '../data/partnerSplits'
 import type { PromoRowsStored } from './promocionalesStorage'
 
 const SOC_STOCK_NAMES = ['Delfi', 'Mechi', 'Susan'] as const
@@ -69,15 +70,36 @@ function isSaleDeliveredForInventory(sale: Pick<Sale, 'delivered'>): boolean {
   return (sale.delivered ?? '').trim().toLowerCase() === 'si'
 }
 
+function isAcSellerForStock(seller: string | null | undefined): boolean {
+  const normalized = seller?.trim() ?? ''
+  return normalized === 'AC' || normalized === AC_STOCK_NAME
+}
+
 /** Unidades entregadas (`delivered = SI`) atribuidas al vendedor de la fila de stock. */
 export function deliveredUnitsAttributedToSeller(sales: Sale[], sellerName: string): number {
   const target = sellerName.trim()
   return sales.reduce((sum, sale) => {
-    if (sale.seller?.trim() !== target) return sum
+    const saleSeller = sale.seller?.trim() ?? ''
+    const matches =
+      saleSeller === target ||
+      (target === AC_STOCK_NAME && saleSeller === 'AC') ||
+      (target === 'AC' && saleSeller === AC_STOCK_NAME)
+    if (!matches) return sum
     if (!isSaleDeliveredForInventory(sale)) return sum
 
     return sum + saleQuantityFloor(sale)
   }, 0)
+}
+
+export function stockMovementUnitsForRow(sales: Sale[], rowName: string): number {
+  if (rowName === AC_STOCK_NAME) {
+    return sales.reduce((sum, sale) => {
+      if (!isAcSellerForStock(sale.seller)) return sum
+      return sum + saleQuantityFloor(sale)
+    }, 0)
+  }
+
+  return deliveredUnitsAttributedToSeller(sales, rowName)
 }
 
 export type InventoryMovementBreakdown = {

@@ -1,7 +1,13 @@
 import './App.css'
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import {
-  computeAbrazandoGananciasFromUnits,
+  acChannelSaleGrossArs,
+  acChannelSales,
+  totalAcChannelSaleGrossArs,
+  totalAcChannelSaleQuantity,
+} from './lib/acChannel'
+import {
+  computeAbrazandoGananciasFromPoolGross,
   computeAbrInventorySplit,
   computeVentasMambulaSplits,
   estimateArsPerUsdFromExpenseRates,
@@ -41,7 +47,7 @@ import {
   inventoryCopiesFromBoxes,
   promoDeliveredUnitsForStockRow,
   parseStockNumber,
-  deliveredUnitsAttributedToSeller,
+  stockMovementUnitsForRow,
   isSaleCobradoOrParcial,
   paidCopiesForSale,
   type InventoryMovementBreakdown,
@@ -194,7 +200,7 @@ const ventasShortDateFormatter = new Intl.DateTimeFormat('es-AR', {
   month: 'short',
   year: 'numeric',
 })
-const sellerNames = ['Delfi', 'Mechi', 'Susan', 'Abrazandocuentos']
+const sellerNames = ['Delfi', 'Mechi', 'Susan', 'AC', 'Abrazandocuentos']
 const appBasePath = import.meta.env.BASE_URL
 const tabRoutes: Record<AppTab, string> = {
   home: '',
@@ -478,10 +484,16 @@ function App() {
     return computeAbrInventorySplit(stockAllocations, projectConfig.costRules, undefined, copiesPerBox)
   }, [stockAllocations, projectConfig.costRules, projectConfig.firstPrintRun.boxes, projectConfig.firstPrintRun.copies])
 
-  const acSchemeSoldQuantityRaw = useMemo(() => {
-    const raw = totalAcSchemeSoldQuantity(ventasData)
-    return Math.max(0, raw)
-  }, [ventasData.acSchemeSales, ventasData.acSchemeSoldUnits])
+  const acLiquidacionSoldQuantityRaw = useMemo(() => {
+    return totalAcSchemeSoldQuantity(ventasData) + totalAcChannelSaleQuantity(sales)
+  }, [ventasData, sales])
+
+  const acLiquidacionPoolGrossArs = useMemo(() => {
+    const fromScheme = ventasData.acSchemeSales.reduce((sum, row) => sum + row.amountArs, 0)
+    return fromScheme + totalAcChannelSaleGrossArs(sales, abrSplit.referenceUnitPriceArs)
+  }, [ventasData.acSchemeSales, sales, abrSplit.referenceUnitPriceArs])
+
+  const acChannelSalesForList = useMemo(() => acChannelSales(sales), [sales])
 
   async function handleAcSchemeSaleSubmit(input: { quantity: number; soldAt: string }) {
     const row = await insertAcSchemeSaleRecord(input)
@@ -888,8 +900,10 @@ function App() {
       {tab === 'home' ? (
         <HomeScreen
           abrSplit={abrSplit}
+          acChannelSales={acChannelSalesForList}
+          acLiquidacionPoolGrossArs={acLiquidacionPoolGrossArs}
+          acLiquidacionSoldQuantityRaw={acLiquidacionSoldQuantityRaw}
           acSchemeSales={ventasData.acSchemeSales}
-          acSchemeSoldQuantityRaw={acSchemeSoldQuantityRaw}
           copyMechiPaymentAlias={copyMechiPaymentAlias}
           copyPaymentAlias={copyPaymentAlias}
           copyStatus={copyStatus}
@@ -1169,11 +1183,13 @@ function AcSchemeVentasSheet({
 }
 
 function AcSchemeSalesListSheet({
+  acChannelSales: acChannelSaleRows,
   legacySoldTotal,
   onClose,
   onDeleteRecord,
   rows,
 }: {
+  acChannelSales: Sale[]
   legacySoldTotal: number
   onClose: () => void
   onDeleteRecord: (id: string) => Promise<void>
@@ -1192,9 +1208,25 @@ function AcSchemeSalesListSheet({
       }),
     [rows],
   )
-  const totalQty = sorted.reduce((sum, row) => sum + row.quantity, 0)
-  const totalArs = sorted.reduce((sum, row) => sum + row.amountArs, 0)
-  const countLabel = sorted.length === 1 ? '1 registro' : `${sorted.length} registros`
+  const sortedChannelSales = useMemo(
+    () =>
+      [...acChannelSaleRows].sort((a, b) => {
+        const byDate = String(b.date).localeCompare(String(a.date))
+        if (byDate !== 0) return byDate
+
+        return String(b.id).localeCompare(String(a.id))
+      }),
+    [acChannelSaleRows],
+  )
+  const channelQty = sortedChannelSales.reduce((sum, sale) => sum + (sale.quantity ?? 0), 0)
+  const channelArs = sortedChannelSales.reduce(
+    (sum, sale) => sum + acChannelSaleGrossArs(sale),
+    0,
+  )
+  const totalQty = sorted.reduce((sum, row) => sum + row.quantity, 0) + channelQty
+  const totalArs = sorted.reduce((sum, row) => sum + row.amountArs, 0) + channelArs
+  const totalRecords = sorted.length + sortedChannelSales.length
+  const countLabel = totalRecords === 1 ? '1 registro' : `${totalRecords} registros`
 
   return (
     <>
@@ -1212,9 +1244,9 @@ function AcSchemeSalesListSheet({
           </div>
 
           <div className="ac-scheme-sales-list-body">
-            {sorted.length > 0 ? (
+            {totalRecords > 0 ? (
               <p className="ac-scheme-sales-list-summary">
-                {countLabel} · {numberFormatter.format(totalQty)} ejemplares · Total referencial{' '}
+                {countLabel} · {numberFormatter.format(totalQty)} ejemplares · Total{' '}
                 {currencyArsFormatter.format(totalArs)}
               </p>
             ) : (
@@ -1233,7 +1265,7 @@ function AcSchemeSalesListSheet({
                         {ventasShortDateFormatter.format(new Date(`${row.soldAt}T12:00:00`))}
                       </strong>
                       <span className="ac-scheme-sales-detail-meta">
-                        {row.quantity} {row.quantity === 1 ? 'ejemplar' : 'ejemplares'}
+                        Esquema AC · {row.quantity} {row.quantity === 1 ? 'ejemplar' : 'ejemplares'}
                       </span>
                     </div>
                     <div className="ac-scheme-sales-detail-trailing">
@@ -1256,6 +1288,30 @@ function AcSchemeSalesListSheet({
                     </div>
                   </li>
                 ))}
+              </ul>
+            ) : null}
+            {sortedChannelSales.length > 0 ? (
+              <ul className="ac-scheme-sales-detail-list">
+                {sortedChannelSales.map((sale) => {
+                  const qty = sale.quantity ?? 0
+                  const lineTotal = acChannelSaleGrossArs(sale)
+
+                  return (
+                    <li className="ac-scheme-sales-detail-row" key={sale.id}>
+                      <div className="ac-scheme-sales-detail-main">
+                        <strong>{ventasShortDateFormatter.format(new Date(sale.date))}</strong>
+                        <span className="ac-scheme-sales-detail-meta">
+                          {sale.buyer} · {qty} {qty === 1 ? 'ejemplar' : 'ejemplares'}
+                        </span>
+                      </div>
+                      <div className="ac-scheme-sales-detail-trailing">
+                        <strong className="ac-scheme-sales-detail-amount">
+                          {currencyArsFormatter.format(lineTotal)}
+                        </strong>
+                      </div>
+                    </li>
+                  )
+                })}
               </ul>
             ) : null}
           </div>
@@ -1448,7 +1504,7 @@ function InventoryStockCounts({
     <div className="inventory-stock-counts inventory-stock-counts--ac">
       <div className="inventory-stock-count-cell">
         <span className="inventory-stock-count-dot delivered" />
-        <span className="inventory-stock-count-label">Entregados</span>
+        <span className="inventory-stock-count-label">Vendidos</span>
         <span className="inventory-stock-count-value">{numberFormatter.format(movement.delivered)}</span>
       </div>
       <div className="inventory-stock-count-cell">
@@ -1536,8 +1592,10 @@ function CuentasMedioDetailSheet({
 
 function HomeScreen({
   abrSplit,
+  acChannelSales: acChannelSalesRows,
+  acLiquidacionPoolGrossArs,
+  acLiquidacionSoldQuantityRaw,
   acSchemeSales,
-  acSchemeSoldQuantityRaw,
   copyMechiPaymentAlias,
   copyPaymentAlias,
   copyStatus,
@@ -1565,9 +1623,10 @@ function HomeScreen({
   stockAllocations,
 }: {
   abrSplit: AbrInventorySplit
+  acChannelSales: Sale[]
+  acLiquidacionPoolGrossArs: number
+  acLiquidacionSoldQuantityRaw: number
   acSchemeSales: AcSchemeSaleRecord[]
-  /** Suma de registros del esquema AC (sin recortar al inventario). */
-  acSchemeSoldQuantityRaw: number
   copyMechiPaymentAlias: () => void
   copyPaymentAlias: () => void
   copyStatus: 'idle' | 'copied' | 'error'
@@ -1647,17 +1706,17 @@ function HomeScreen({
     : String(acInventoryRow?.boxes ?? 0)
   const acSchemeCapCopies = inventoryCopiesFromBoxes(acBoxesStr, copiesPerBox)
   const acSchemeCap = Math.max(0, acSchemeCapCopies)
-  const effectiveAcSchemeUnits = Math.min(acSchemeSoldQuantityRaw, acSchemeCap)
-  const acSchemeRemainingQty = Math.max(0, acSchemeCap - acSchemeSoldQuantityRaw)
+  const effectiveAcSchemeUnits = Math.min(acLiquidacionSoldQuantityRaw, acSchemeCap)
+  const acSchemeRemainingQty = Math.max(0, acSchemeCap - acLiquidacionSoldQuantityRaw)
 
   const acSliderGains = useMemo(
     () =>
-      computeAbrazandoGananciasFromUnits(
+      computeAbrazandoGananciasFromPoolGross(
+        acLiquidacionPoolGrossArs,
         effectiveAcSchemeUnits,
         projectConfig.costRules,
-        abrSplit.referenceUnitPriceArs,
       ),
-    [abrSplit.referenceUnitPriceArs, effectiveAcSchemeUnits, projectConfig.costRules],
+    [acLiquidacionPoolGrossArs, effectiveAcSchemeUnits, projectConfig.costRules],
   )
 
   const wonkySaldadoArs = useMemo(
@@ -1899,8 +1958,11 @@ function HomeScreen({
                 : inventoryCopiesFromBoxes(String(item.boxes), copiesPerBox)
 
               const promoUnits = promoDeliveredUnitsForStockRow(promoRows, item.name)
-              const deliveredUnits = deliveredUnitsAttributedToSeller(sales, item.name)
-              const movement = breakdownInventoryMovement(allocationCopies, promoUnits, deliveredUnits, item.name)
+              const movementUnits =
+                item.name === AC_STOCK_NAME
+                  ? acLiquidacionSoldQuantityRaw
+                  : stockMovementUnitsForRow(sales, item.name)
+              const movement = breakdownInventoryMovement(allocationCopies, promoUnits, movementUnits, item.name)
               const isSociaRow = item.name === 'Delfi' || item.name === 'Mechi' || item.name === 'Susan'
 
               return (
@@ -2111,7 +2173,7 @@ function HomeScreen({
               <span className="ac-scheme-indicator-group">
                 <span className="ac-scheme-indicator-label">Vendidos</span>
                 <span className="ac-scheme-indicator-value">
-                  {numberFormatter.format(acSchemeSoldQuantityRaw)}
+                  {numberFormatter.format(acLiquidacionSoldQuantityRaw)}
                 </span>
               </span>
               <button
@@ -2228,7 +2290,8 @@ function HomeScreen({
 
         {acSalesListOpen ? (
           <AcSchemeSalesListSheet
-            legacySoldTotal={acSchemeSoldQuantityRaw}
+            acChannelSales={acChannelSalesRows}
+            legacySoldTotal={acLiquidacionSoldQuantityRaw}
             rows={acSchemeSales}
             onClose={() => setAcSalesListOpen(false)}
             onDeleteRecord={onAcSchemeSaleDelete}
@@ -2685,7 +2748,7 @@ function EncargosScreen({
 
   const encargoSellerStats = useMemo(() => {
     return sellerNames
-      .filter((seller) => seller !== 'Abrazandocuentos')
+      .filter((seller) => seller !== 'Abrazandocuentos' && seller !== 'AC')
       .map((seller) => ({
         seller,
         count: sales.filter((sale) => sale.seller === seller).length,
@@ -2799,7 +2862,7 @@ function encargoQtyCircleClass(quantity: number | null | undefined): string {
 function EncargoSellerPill({ seller }: { seller: string }) {
   const display = seller.trim() || 'Sin vendedor'
   const slug = display.toLowerCase().replace(/\s+/g, '-')
-  const knownSlugs = new Set(['susan', 'delfi', 'mechi', 'abrazandocuentos', 'sin-vendedor'])
+  const knownSlugs = new Set(['susan', 'delfi', 'mechi', 'ac', 'abrazandocuentos', 'sin-vendedor'])
   const payerClass = knownSlugs.has(slug) ? `payer-${slug}` : 'payer-encargo-otro'
 
   return <span className={`payer-chip ${payerClass}`}>{display}</span>
@@ -3196,7 +3259,8 @@ function formatUnitPriceOptionLabel(ars: number) {
 }
 
 const SOCIA_SELLERS = ['Delfi', 'Mechi', 'Susan'] as const
-type SociasSeller = (typeof SOCIA_SELLERS)[number]
+const SALE_DRAFT_SELLERS = [...SOCIA_SELLERS, 'AC'] as const
+type SaleDraftSeller = (typeof SALE_DRAFT_SELLERS)[number]
 
 function SaleDraftSheet({
   createVariant = 'venta',
@@ -3247,7 +3311,7 @@ function SaleDraftSheet({
   const useSellerSelect =
     mode === 'edit' &&
     draft.seller.trim() !== '' &&
-    !(SOCIA_SELLERS as readonly string[]).includes(draft.seller.trim())
+    !(SALE_DRAFT_SELLERS as readonly string[]).includes(draft.seller.trim())
 
   const paymentMethodSegmentActive: 'transferencia' | 'efectivo' | null =
     draft.paymentMethod === 'transferencia' || draft.paymentMethod === 'efectivo'
@@ -3298,10 +3362,10 @@ function SaleDraftSheet({
               {useSellerSelect ? (
                 <SellerSelect value={draft.seller} onChange={(seller) => setDraft({ ...draft, seller })} />
               ) : (
-                <Segmented<SociasSeller>
+                <Segmented<SaleDraftSeller>
                   active={
-                    SOCIA_SELLERS.includes(draft.seller as SociasSeller)
-                      ? (draft.seller as SociasSeller)
+                    SALE_DRAFT_SELLERS.includes(draft.seller as SaleDraftSeller)
+                      ? (draft.seller as SaleDraftSeller)
                       : 'Delfi'
                   }
                   onChange={(seller) => setDraft({ ...draft, seller })}
@@ -3309,6 +3373,7 @@ function SaleDraftSheet({
                     { key: 'Delfi', label: 'Delfi' },
                     { key: 'Mechi', label: 'Mechi' },
                     { key: 'Susan', label: 'Susan' },
+                    { key: 'AC', label: 'AC' },
                   ]}
                 />
               )}
@@ -4426,7 +4491,9 @@ function SellerSelect({
   onChange: (seller: string) => void
   value: string
 }) {
-  const sellers = hideAbrazandoCuentos ? SOCIA_SELLERS : ([...SOCIA_SELLERS, 'Abrazandocuentos'] as const)
+  const sellers = hideAbrazandoCuentos
+    ? SOCIA_SELLERS
+    : ([...SOCIA_SELLERS, 'AC', 'Abrazandocuentos'] as const)
 
   return (
     <select aria-label="Vendedor" value={value} onChange={(event) => onChange(event.target.value)}>

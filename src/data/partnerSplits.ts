@@ -41,29 +41,38 @@ export type AbrazandoGananciasPreview = {
   gananciaPorSociaAcArs: number
 }
 
+export function computeAbrazandoGananciasFromPoolGross(
+  poolGrossArs: number,
+  unitsInScheme: number,
+  costRules: ProjectConfig['costRules'],
+): AbrazandoGananciasPreview {
+  const pool = Math.max(0, Number(poolGrossArs))
+  const units = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.round(Number(unitsInScheme))))
+  const pctAbrazando = costRules.abrazandoCuentosShare
+  const pctWonky = costRules.wonkyShare
+  const pctSocias = Math.max(0, 1 - pctAbrazando - pctWonky)
+  const gananciaAbrazandoCuentosArs = pool * pctAbrazando
+  const gananciaWonkyArs = pool * pctWonky
+  const poolSociasArs = pool * pctSocias
+  const gananciaPorSociaAcArs = poolSociasArs / 3
+
+  return {
+    unitsInScheme: units,
+    poolGrossArs: pool,
+    gananciaAbrazandoCuentosArs,
+    gananciaWonkyArs,
+    poolSociasArs,
+    gananciaPorSociaAcArs,
+  }
+}
+
 export function computeAbrazandoGananciasFromUnits(
   unitsSoldInScheme: number,
   costRules: ProjectConfig['costRules'],
   referenceUnitPriceArs: number = ABRAZANDOCUENTOS_REFERENCE_UNIT_PRICE_ARS,
 ): AbrazandoGananciasPreview {
   const q = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.round(Number(unitsSoldInScheme))))
-  const poolGrossArs = q * referenceUnitPriceArs
-  const pctAbrazando = costRules.abrazandoCuentosShare
-  const pctWonky = costRules.wonkyShare
-  const pctSocias = Math.max(0, 1 - pctAbrazando - pctWonky)
-  const gananciaAbrazandoCuentosArs = poolGrossArs * pctAbrazando
-  const gananciaWonkyArs = poolGrossArs * pctWonky
-  const poolSociasArs = poolGrossArs * pctSocias
-  const gananciaPorSociaAcArs = poolSociasArs / 3
-
-  return {
-    unitsInScheme: q,
-    poolGrossArs,
-    gananciaAbrazandoCuentosArs,
-    gananciaWonkyArs,
-    poolSociasArs,
-    gananciaPorSociaAcArs,
-  }
+  return computeAbrazandoGananciasFromPoolGross(q * referenceUnitPriceArs, q, costRules)
 }
 
 export function estimateArsPerUsdFromExpenseRates(rates: Array<number | null | undefined>): number {
