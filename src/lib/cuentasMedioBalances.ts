@@ -1,3 +1,4 @@
+import { isAcChannelSeller } from './acChannel'
 import type { Sale, SplitPartnerKey } from '../types'
 
 export const CUENTAS_SOCIAS = ['Delfi', 'Mechi', 'Susan'] as const satisfies readonly SplitPartnerKey[]
@@ -30,6 +31,12 @@ function normalizeSociaSeller(seller: string | null | undefined): CuentasSocia |
   return null
 }
 
+/** Socia que retiene el efectivo de una venta cobrada (AC cobra siempre vía Delfi). */
+export function efectivoHolderForSeller(seller: string | null | undefined): CuentasSocia | null {
+  if (isAcChannelSeller(seller)) return 'Delfi'
+  return normalizeSociaSeller(seller)
+}
+
 /** Saldos brutos desde ventas cobradas (antes de descontar saldos de cuenta). */
 export function computeCuentasMedioGrossFromSales(sales: Sale[]): CuentasMedioGross {
   const balances = emptyCuentasBalances()
@@ -39,7 +46,7 @@ export function computeCuentasMedioGrossFromSales(sales: Sale[]): CuentasMedioGr
     if (sale.paymentStatus !== 'cobrado') continue
 
     if (sale.paymentMethod === 'efectivo') {
-      const socia = normalizeSociaSeller(sale.seller)
+      const socia = efectivoHolderForSeller(sale.seller)
       if (socia) balances.efectivo[socia] += sale.paidArs
     } else if (sale.paymentMethod === 'transferencia') {
       if (sale.transferDestination === 'Delfi') balances.banco.Delfi += sale.paidArs
