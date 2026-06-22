@@ -11,6 +11,8 @@ import {
 
 export type PoolDebit = { account: CuentasBankAccount; amountArs: number }
 
+export type EfectivoPoolDebit = { socia: CuentasSocia; amountArs: number }
+
 export type CuentasPartnerSettlementLine = {
   partner: CuentasSocia
   requestedArs: number
@@ -18,6 +20,7 @@ export type CuentasPartnerSettlementLine = {
   fromEfectivoArs: number
   fromOwnBankArs: number
   fromPool: PoolDebit[]
+  fromEfectivoPool: EfectivoPoolDebit[]
 }
 
 export type CuentasSettlementQuestion =
@@ -73,6 +76,69 @@ function drainPoolAscending(
   return { debits, remaining: left }
 }
 
+function drainEfectivoPoolAscending(
+  balances: CuentasMedioBalances,
+  remanente: number,
+  excludePartner: CuentasSocia,
+): { debits: EfectivoPoolDebit[]; remaining: number } {
+  let left = remanente
+  const debits: EfectivoPoolDebit[] = []
+  const order = [...CUENTAS_SOCIAS]
+    .filter((socia) => socia !== excludePartner)
+    .sort((a, b) => balances.efectivo[a] - balances.efectivo[b])
+
+  for (const socia of order) {
+    if (left <= 0) break
+    const available = balances.efectivo[socia]
+    if (available <= 0) continue
+
+    const take = Math.min(available, left)
+    debits.push({ socia, amountArs: take })
+    balances.efectivo[socia] = roundArs(balances.efectivo[socia] - take)
+    left = roundArs(left - take)
+  }
+
+  return { debits, remaining: left }
+}
+
+function drainSharedFunds(
+  balances: CuentasMedioBalances,
+  remanente: number,
+  partner: CuentasSocia,
+): {
+  fromPool: PoolDebit[]
+  fromEfectivoPool: EfectivoPoolDebit[]
+  remaining: number
+} {
+  const bankDrained = drainPoolAscending(balances, remanente)
+  const cashDrained = drainEfectivoPoolAscending(balances, bankDrained.remaining, partner)
+
+  return {
+    fromPool: bankDrained.debits,
+    fromEfectivoPool: cashDrained.debits,
+    remaining: cashDrained.remaining,
+  }
+}
+
+function sumSharedFundArs(fromPool: PoolDebit[], fromEfectivoPool: EfectivoPoolDebit[]): number {
+  return roundArs(
+    fromPool.reduce((sum, debit) => sum + debit.amountArs, 0) +
+      fromEfectivoPool.reduce((sum, debit) => sum + debit.amountArs, 0),
+  )
+}
+
+function emptySettlementLine(partner: CuentasSocia, requestedArs: number): CuentasPartnerSettlementLine {
+  return {
+    partner,
+    requestedArs,
+    settledArs: 0,
+    fromEfectivoArs: 0,
+    fromOwnBankArs: 0,
+    fromPool: [],
+    fromEfectivoPool: [],
+  }
+}
+
 function applyLineToBalances(balances: CuentasMedioBalances, line: CuentasPartnerSettlementLine) {
   balances.efectivo[line.partner] = roundArs(balances.efectivo[line.partner] - line.fromEfectivoArs)
   if (line.fromOwnBankArs > 0) {
@@ -82,6 +148,9 @@ function applyLineToBalances(balances: CuentasMedioBalances, line: CuentasPartne
   }
   for (const debit of line.fromPool) {
     balances.banco[debit.account] = roundArs(balances.banco[debit.account] - debit.amountArs)
+  }
+  for (const debit of line.fromEfectivoPool) {
+    balances.efectivo[debit.socia] = roundArs(balances.efectivo[debit.socia] - debit.amountArs)
   }
 }
 
@@ -98,17 +167,7 @@ function trySettlePartner(
 ): TrySettleOutcome {
   const requested = roundArs(requestedArs)
   if (requested <= 0) {
-    return {
-      ok: true,
-      line: {
-        partner,
-        requestedArs: 0,
-        settledArs: 0,
-        fromEfectivoArs: 0,
-        fromOwnBankArs: 0,
-        fromPool: [],
-      },
-    }
+    return { ok: true, line: emptySettlementLine(partner, 0) }
   }
 
   const work = cloneCuentasBalances(balances)
@@ -118,7 +177,8 @@ function trySettlePartner(
 
   let remanente = roundArs(requested - fromEfectivoArs)
   let fromOwnBankArs = 0
-  const fromPool: PoolDebit[] = []
+  let fromPool: PoolDebit[] = []
+  let fromEfectivoPool: EfectivoPoolDebit[] = []
 
   if (hasOwnBank) {
     if (remanente > 0) {
@@ -145,8 +205,9 @@ function trySettlePartner(
       }
 
       if (decision === 'use_pool') {
-        const drained = drainPoolAscending(work, remanente)
-        fromPool.push(...drained.debits)
+        const drained = drainSharedFunds(work, remanente, partner)
+        fromPool = drained.fromPool
+        fromEfectivoPool = drained.fromEfectivoPool
         remanente = drained.remaining
 
         if (remanente > 0) {
@@ -160,30 +221,21 @@ function trySettlePartner(
                 partner,
                 shortfallArs: remanente,
                 maxSettleArs: roundArs(
-                  fromEfectivoArs + fromOwnBankArs + fromPool.reduce((s, d) => s + d.amountArs, 0),
+                  fromEfectivoArs + fromOwnBankArs + sumSharedFundArs(fromPool, fromEfectivoPool),
                 ),
               },
             }
           }
           if (decisionPool === 'skip') {
-            return {
-              ok: true,
-              line: {
-                partner,
-                requestedArs: requested,
-                settledArs: 0,
-                fromEfectivoArs: 0,
-                fromOwnBankArs: 0,
-                fromPool: [],
-              },
-            }
+            return { ok: true, line: emptySettlementLine(partner, requested) }
           }
         }
       }
     }
   } else if (remanente > 0) {
-    const drained = drainPoolAscending(work, remanente)
-    fromPool.push(...drained.debits)
+    const drained = drainSharedFunds(work, remanente, partner)
+    fromPool = drained.fromPool
+    fromEfectivoPool = drained.fromEfectivoPool
     remanente = drained.remaining
 
     if (remanente > 0) {
@@ -197,24 +249,14 @@ function trySettlePartner(
             partner,
             shortfallArs: remanente,
             maxSettleArs: roundArs(
-              fromEfectivoArs + fromPool.reduce((s, d) => s + d.amountArs, 0),
+              fromEfectivoArs + sumSharedFundArs(fromPool, fromEfectivoPool),
             ),
           },
         }
       }
 
       if (decision === 'skip') {
-        return {
-          ok: true,
-          line: {
-            partner,
-            requestedArs: requested,
-            settledArs: 0,
-            fromEfectivoArs: 0,
-            fromOwnBankArs: 0,
-            fromPool: [],
-          },
-        }
+        return { ok: true, line: emptySettlementLine(partner, requested) }
       }
     }
   }
@@ -223,11 +265,12 @@ function trySettlePartner(
     partner,
     requestedArs: requested,
     settledArs: roundArs(
-      fromEfectivoArs + fromOwnBankArs + fromPool.reduce((s, d) => s + d.amountArs, 0),
+      fromEfectivoArs + fromOwnBankArs + sumSharedFundArs(fromPool, fromEfectivoPool),
     ),
     fromEfectivoArs,
     fromOwnBankArs,
     fromPool,
+    fromEfectivoPool,
   }
 
   applyLineToBalances(balances, line)

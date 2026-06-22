@@ -192,6 +192,9 @@ export function applyCuentasOperationsToBalances(
       for (const debit of line.fromPool) {
         balances.banco[debit.account] -= debit.amountArs
       }
+      for (const debit of line.fromEfectivoPool ?? []) {
+        balances.efectivo[debit.socia] -= debit.amountArs
+      }
     }
   }
 

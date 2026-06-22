@@ -224,8 +224,14 @@ export default function CuentasMedioSettlementModal({
                     </div>
                   ) : null}
                   {line.fromPool.map((d) => (
-                    <div className="sheet-list-item" key={`${line.partner}-${d.account}`}>
+                    <div className="sheet-list-item" key={`${line.partner}-bank-${d.account}`}>
                       <span>De cuenta {d.account}</span>
+                      <strong>{formatArs(d.amountArs)}</strong>
+                    </div>
+                  ))}
+                  {(line.fromEfectivoPool ?? []).map((d) => (
+                    <div className="sheet-list-item" key={`${line.partner}-cash-${d.socia}`}>
+                      <span>De efectivo {d.socia}</span>
                       <strong>{formatArs(d.amountArs)}</strong>
                     </div>
                   ))}
