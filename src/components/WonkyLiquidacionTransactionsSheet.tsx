@@ -1,5 +1,6 @@
 import { WONKY_ARS_PER_VENTA_COPY } from '../data/partnerSplits'
 import { formatCuentasPaymentSourceLabel } from '../lib/cuentasPaymentSources'
+import { formatDateAr } from '../lib/dateFormat'
 import type { CuentasSettlementOperation } from '../lib/cuentasSettlementsRepository'
 import { isWonkyEjemplaresScope } from '../lib/wonkySettlement'
 import type { PartnerSettlement } from '../types'
@@ -58,7 +59,7 @@ export default function WonkyLiquidacionTransactionsSheet({
                   <li className="cuentas-tx-item" key={row.id}>
                     <div className="cuentas-tx-item-head">
                       <strong>{formatDateTime(row.createdAt)}</strong>
-                      <span className="cuentas-tx-item-date">Operación · {row.settledOn}</span>
+                      <span className="cuentas-tx-item-date">Operación · {formatDateAr(row.settledOn)}</span>
                     </div>
                     <div className="cuentas-settle-partner-block cuentas-settle-partner-block--compact">
                       <div className="sheet-list-item">

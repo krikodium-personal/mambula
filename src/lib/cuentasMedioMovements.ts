@@ -1,4 +1,5 @@
 import type { CuentasSocia } from './cuentasMedioBalances'
+import { formatDateAr } from './dateFormat'
 import type { CuentasPaymentSource } from './cuentasPaymentSources'
 import type { CuentasSettlementOperation } from './cuentasSettlementsRepository'
 import type { Sale } from '../types'
@@ -74,7 +75,7 @@ export function collectCuentasMedioMovements(
           id: `op:${op.id}:wonky`,
           sortKey,
           label: 'Saldo Wonky',
-          meta: `${payment.copies} ${payment.copies === 1 ? 'ejemplar' : 'ejemplares'} · ${op.settledOn}`,
+          meta: `${payment.copies} ${payment.copies === 1 ? 'ejemplar' : 'ejemplares'} · ${formatDateAr(op.settledOn)}`,
           amountArs: payment.amountArs,
           settledOn: op.settledOn,
         })
@@ -91,7 +92,7 @@ export function collectCuentasMedioMovements(
             id: `op:${op.id}:ef:${line.partner}`,
             sortKey,
             label: `Saldo cuenta · ${line.partner}`,
-            meta: op.settledOn,
+            meta: formatDateAr(op.settledOn),
             amountArs: line.fromEfectivoArs,
             settledOn: op.settledOn,
           })
@@ -105,7 +106,7 @@ export function collectCuentasMedioMovements(
             id: `op:${op.id}:ef-pool:${line.partner}:${debit.socia}`,
             sortKey,
             label: `Saldo cuenta · ${line.partner}`,
-            meta: `${op.settledOn} · efectivo compartido`,
+            meta: `${formatDateAr(op.settledOn)} · efectivo compartido`,
             amountArs: debit.amountArs,
             settledOn: op.settledOn,
           })
@@ -117,7 +118,7 @@ export function collectCuentasMedioMovements(
             id: `op:${op.id}:bank:${line.partner}`,
             sortKey,
             label: `Saldo cuenta · ${line.partner}`,
-            meta: op.settledOn,
+            meta: formatDateAr(op.settledOn),
             amountArs: line.fromOwnBankArs,
             settledOn: op.settledOn,
           })
@@ -131,7 +132,7 @@ export function collectCuentasMedioMovements(
             id: `op:${op.id}:bank-pool:${line.partner}:${debit.account}`,
             sortKey,
             label: `Saldo cuenta · ${line.partner}`,
-            meta: `${op.settledOn} · cuenta compartida`,
+            meta: `${formatDateAr(op.settledOn)} · cuenta compartida`,
             amountArs: debit.amountArs,
             settledOn: op.settledOn,
           })

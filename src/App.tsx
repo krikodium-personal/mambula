@@ -1,3 +1,4 @@
+import { formatDateAr, formatDateTimeAr } from './lib/dateFormat'
 import { APP_VERSION } from './lib/appVersion'
 import {
   collectCuentasMedioMovements,
@@ -194,11 +195,6 @@ const currencyUsdFormatter = new Intl.NumberFormat('es-AR', {
   style: 'currency',
   currency: 'USD',
   maximumFractionDigits: 0,
-})
-const ventasShortDateFormatter = new Intl.DateTimeFormat('es-AR', {
-  day: 'numeric',
-  month: 'short',
-  year: 'numeric',
 })
 const sellerNames = ['Delfi', 'Mechi', 'Susan', 'AC', 'Abrazandocuentos']
 const appBasePath = import.meta.env.BASE_URL
@@ -1144,7 +1140,7 @@ function CuentasMedioDetailSheet({
                         <div className="cuentas-detail-row-main">
                           <strong>{sale.buyer}</strong>
                           <span className="cuentas-detail-meta">
-                            {ventasShortDateFormatter.format(new Date(sale.date))}
+                            {formatDateAr(sale.date)}
                             {sale.quantity != null ? (
                               <>
                                 {' '}
@@ -1269,6 +1265,7 @@ function HomeScreen({
   } | null>(null)
   const [cuentasSettleOpen, setCuentasSettleOpen] = useState(false)
   const [cuentasTxOpen, setCuentasTxOpen] = useState(false)
+  const [settlementHistoryOpen, setSettlementHistoryOpen] = useState(false)
   const availableCopies = projectConfig.firstPrintRun.copies - soldCopies
   const copiesPerBox = projectConfig.firstPrintRun.copies / projectConfig.firstPrintRun.boxes
   /** Cajas no asignadas a destinos del Home (mismas filas que la tabla; sin Promocionales). Ejemplares = cajas × libros/caja. */
@@ -1760,12 +1757,7 @@ function HomeScreen({
           cuentasBalances={cuentasBalances}
           cuentasOperations={cuentasOperations}
           formatArs={(n) => currencyArsFormatter.format(n)}
-          formatDateTime={(iso) =>
-            new Intl.DateTimeFormat('es-AR', {
-              dateStyle: 'medium',
-              timeStyle: 'short',
-            }).format(new Date(iso))
-          }
+          formatDateTime={formatDateTimeAr}
           saldadoArs={wonkySaldadoArs}
           ejemplaresSaldados={wonkyEjemplaresSaldados}
           ejemplaresVendidos={paidSoldCopies}
@@ -1786,16 +1778,27 @@ function HomeScreen({
         {partnerSettlements.length > 0 ? (
           <div className="ios-card">
             <div className="settlement-history-block settlement-history-block--flush">
-              <h4>Movimientos de saldo</h4>
-              <ul className="settlement-history-list">
-                {partnerSettlements.map((entry) => (
-                  <li key={entry.id}>
-                    <span>{entry.partner}</span>
-                    <span>{currencyArsFormatter.format(entry.amountArs)}</span>
-                    <span>{entry.settledOn}</span>
-                  </li>
-                ))}
-              </ul>
+              <div className="settlement-history-head">
+                <h4>Movimientos de saldo</h4>
+                <button
+                  className="cuentas-card-link"
+                  onClick={() => setSettlementHistoryOpen((open) => !open)}
+                  type="button"
+                >
+                  {settlementHistoryOpen ? 'Cerrar lista' : 'Ver lista'}
+                </button>
+              </div>
+              {settlementHistoryOpen ? (
+                <ul className="settlement-history-list">
+                  {partnerSettlements.map((entry) => (
+                    <li key={entry.id}>
+                      <span>{entry.partner}</span>
+                      <span>{currencyArsFormatter.format(entry.amountArs)}</span>
+                      <span>{formatDateAr(entry.settledOn)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -1831,12 +1834,7 @@ function HomeScreen({
         {cuentasTxOpen ? (
           <CuentasMedioTransactionsSheet
             formatArs={(value) => currencyArsFormatter.format(value)}
-            formatDateTime={(iso) =>
-              new Intl.DateTimeFormat('es-AR', {
-                dateStyle: 'medium',
-                timeStyle: 'short',
-              }).format(new Date(iso))
-            }
+            formatDateTime={formatDateTimeAr}
             onClose={() => setCuentasTxOpen(false)}
             operations={cuentasOperations}
           />
@@ -2477,7 +2475,7 @@ function SaleRow({
         <div className="sale-row-left">
           <strong>{sale.buyer}</strong>
           <div className="sale-row-meta">
-            <span>{ventasShortDateFormatter.format(new Date(sale.date))}</span>
+            <span>{formatDateAr(sale.date)}</span>
             <span>·</span>
             <span>{sale.quantity ?? '-'} {sale.quantity === 1 ? 'unidad' : 'unidades'}</span>
             <span>·</span>
