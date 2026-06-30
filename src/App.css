@@ -561,7 +561,7 @@ button.stat-card.stat-card--clickable {
 .cuentas-tx-sheet-body {
   max-height: min(70vh, 560px);
   overflow-y: auto;
-  padding-bottom: 8px;
+  padding: 0 20px 8px;
 }
 
 .cuentas-tx-list {
@@ -643,6 +643,11 @@ button.stat-card.stat-card--clickable {
 
 .detail-sheet--tall {
   max-height: min(88vh, 720px);
+}
+
+.detail-sheet--tall .primary-button.full {
+  margin: 12px 20px 24px;
+  width: calc(100% - 40px);
 }
 
 .cuentas-subsection-label {
