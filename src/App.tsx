@@ -1,4 +1,9 @@
 import { APP_VERSION } from './lib/appVersion'
+import {
+  collectCuentasMedioMovements,
+  summarizeCuentasMedioMovements,
+  type CuentasMedioMovement,
+} from './lib/cuentasMedioMovements'
 import './App.css'
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import {
@@ -1089,19 +1094,19 @@ function InventoryStockCounts({
 }
 
 function CuentasMedioDetailSheet({
+  balanceArs,
+  movements,
   onClose,
   onSelectSale,
-  sales,
   title,
 }: {
+  balanceArs: number
+  movements: CuentasMedioMovement[]
   onClose: () => void
   onSelectSale: (sale: Sale) => void
-  sales: Sale[]
   title: string
 }) {
-  const sorted = useMemo(() => [...sales].sort(compareSaleDateDesc), [sales])
-  const totalArs = useMemo(() => sorted.reduce((sum, sale) => sum + sale.paidArs, 0), [sorted])
-  const countLabel = sorted.length === 1 ? '1 venta cobrada' : `${sorted.length} ventas cobradas`
+  const summary = useMemo(() => summarizeCuentasMedioMovements(movements), [movements])
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
@@ -1111,7 +1116,7 @@ function CuentasMedioDetailSheet({
           <div>
             <h2>{title}</h2>
             <p>
-              {countLabel} · Total {currencyArsFormatter.format(totalArs)}
+              {summary.summaryLabel} · Saldo {currencyArsFormatter.format(balanceArs)}
             </p>
           </div>
           <button aria-label="Cerrar" className="close-button" onClick={onClose} type="button">
@@ -1120,40 +1125,62 @@ function CuentasMedioDetailSheet({
         </div>
 
         <div className="cuentas-detail-sheet-body">
-          {sorted.length === 0 ? (
-            <p className="cuentas-empty">No hay ventas en este concepto.</p>
+          {movements.length === 0 ? (
+            <p className="cuentas-empty">No hay movimientos en este concepto.</p>
           ) : (
             <ul className="cuentas-detail-list">
-              {sorted.map((sale) => (
-                <li className="cuentas-detail-row-wrap" key={sale.id}>
-                  <button
-                    aria-label={`Ver detalle: ${sale.buyer}`}
-                    className="cuentas-detail-row-button"
-                    onClick={() => onSelectSale(sale)}
-                    type="button"
-                  >
-                    <div className="cuentas-detail-row-main">
-                      <strong>{sale.buyer}</strong>
-                      <span className="cuentas-detail-meta">
-                        {ventasShortDateFormatter.format(new Date(sale.date))}
-                        {sale.quantity != null ? (
-                          <>
-                            {' '}
-                            · {sale.quantity} {sale.quantity === 1 ? 'unidad' : 'unidades'}
-                          </>
-                        ) : null}
-                        {sale.paymentMethod === 'transferencia' && sale.seller ? (
-                          <>
-                            {' '}
-                            · {sale.seller}
-                          </>
-                        ) : null}
-                      </span>
+              {movements.map((movement) => {
+                if (movement.kind === 'sale') {
+                  const sale = movement.sale
+
+                  return (
+                    <li className="cuentas-detail-row-wrap" key={movement.id}>
+                      <button
+                        aria-label={`Ver detalle: ${sale.buyer}`}
+                        className="cuentas-detail-row-button"
+                        onClick={() => onSelectSale(sale)}
+                        type="button"
+                      >
+                        <div className="cuentas-detail-row-main">
+                          <strong>{sale.buyer}</strong>
+                          <span className="cuentas-detail-meta">
+                            {ventasShortDateFormatter.format(new Date(sale.date))}
+                            {sale.quantity != null ? (
+                              <>
+                                {' '}
+                                · {sale.quantity} {sale.quantity === 1 ? 'unidad' : 'unidades'}
+                              </>
+                            ) : null}
+                            {sale.paymentMethod === 'transferencia' && sale.seller ? (
+                              <>
+                                {' '}
+                                · {sale.seller}
+                              </>
+                            ) : null}
+                          </span>
+                        </div>
+                        <strong className="cuentas-detail-amount">
+                          {currencyArsFormatter.format(movement.amountArs)}
+                        </strong>
+                      </button>
+                    </li>
+                  )
+                }
+
+                return (
+                  <li className="cuentas-detail-row-wrap" key={movement.id}>
+                    <div className="cuentas-detail-row-button cuentas-detail-row-button--static">
+                      <div className="cuentas-detail-row-main">
+                        <strong>{movement.label}</strong>
+                        <span className="cuentas-detail-meta">{movement.meta}</span>
+                      </div>
+                      <strong className="cuentas-detail-amount cuentas-detail-amount--debit">
+                        −{currencyArsFormatter.format(movement.amountArs)}
+                      </strong>
                     </div>
-                    <strong className="cuentas-detail-amount">{currencyArsFormatter.format(sale.paidArs)}</strong>
-                  </button>
-                </li>
-              ))}
+                  </li>
+                )
+              })}
             </ul>
           )}
         </div>
@@ -1235,7 +1262,11 @@ function HomeScreen({
     return createStockAllocationDraft(allocationsForHomeInventoryTable(stockAllocations))
   })
   const [localStockError, setLocalStockError] = useState<string | null>(null)
-  const [cuentasMedioSheet, setCuentasMedioSheet] = useState<{ title: string; sales: Sale[] } | null>(null)
+  const [cuentasMedioSheet, setCuentasMedioSheet] = useState<{
+    title: string
+    balanceArs: number
+    movements: CuentasMedioMovement[]
+  } | null>(null)
   const [cuentasSettleOpen, setCuentasSettleOpen] = useState(false)
   const [cuentasTxOpen, setCuentasTxOpen] = useState(false)
   const availableCopies = projectConfig.firstPrintRun.copies - soldCopies
@@ -1356,11 +1387,37 @@ function HomeScreen({
       }
     }
 
-    const efectivoRows = CUENTAS_SOCIAS.map((seller) => ({
-      seller,
-      amount: cuentasBalances.efectivo[seller],
-      sales: efectivoSalesBySocia[seller],
-    }))
+    const efectivoRows = CUENTAS_SOCIAS.map((seller) => {
+      const bucketSales = efectivoSalesBySocia[seller]
+      const movements = collectCuentasMedioMovements(
+        { medium: 'efectivo', socia: seller },
+        bucketSales,
+        cuentasOperations,
+      )
+
+      return {
+        seller,
+        amount: cuentasBalances.efectivo[seller],
+        movements,
+        sales: bucketSales,
+      }
+    })
+
+    const transferenciaDelfiMovements = collectCuentasMedioMovements(
+      { medium: 'transferencia', account: 'Delfi' },
+      transferenciaSales.Delfi,
+      cuentasOperations,
+    )
+    const transferenciaMechiMovements = collectCuentasMedioMovements(
+      { medium: 'transferencia', account: 'Mechi' },
+      transferenciaSales.Mechi,
+      cuentasOperations,
+    )
+    const transferenciaSinDefinirMovements = collectCuentasMedioMovements(
+      { medium: 'transferencia', account: 'sinDefinir' },
+      transferenciaSales.sinDefinir,
+      cuentasOperations,
+    )
 
     const transferencia = {
       Delfi: cuentasBalances.banco.Delfi,
@@ -1371,8 +1428,17 @@ function HomeScreen({
     const efectivoTotal = efectivoRows.reduce((sum, row) => sum + row.amount, 0)
     const transferenciaTotal = transferencia.Delfi + transferencia.Mechi + transferencia.sinDefinir
 
-    return { efectivoRows, transferencia, transferenciaSales, efectivoTotal, transferenciaTotal }
-  }, [cuentasBalances, cuentasMedioGross.transferenciaSinDefinir, sales])
+    return {
+      efectivoRows,
+      transferencia,
+      transferenciaDelfiMovements,
+      transferenciaMechiMovements,
+      transferenciaSinDefinirMovements,
+      transferenciaSales,
+      efectivoTotal,
+      transferenciaTotal,
+    }
+  }, [cuentasBalances, cuentasMedioGross.transferenciaSinDefinir, cuentasOperations, sales])
 
   function startEditingInventory() {
     setStockDraft(createStockAllocationDraft(inventoryTableRows))
@@ -1604,15 +1670,16 @@ function HomeScreen({
 
           <h4 className="cuentas-subsection-label">EFECTIVO</h4>
           <ul className="cuentas-rows">
-            {cuentasPorMedio.efectivoRows.map(({ seller, amount, sales: bucketSales }) => (
+            {cuentasPorMedio.efectivoRows.map(({ seller, amount, movements }) => (
               <li className="cuentas-row cuentas-row--tap" key={seller}>
                 <button
                   className="cuentas-row-button"
-                  disabled={bucketSales.length === 0}
+                  disabled={movements.length === 0}
                   onClick={() =>
                     setCuentasMedioSheet({
                       title: `Efectivo · ${seller}`,
-                      sales: bucketSales,
+                      balanceArs: amount,
+                      movements,
                     })
                   }
                   type="button"
@@ -1633,11 +1700,12 @@ function HomeScreen({
             <li className="cuentas-row cuentas-row--tap">
               <button
                 className="cuentas-row-button"
-                disabled={cuentasPorMedio.transferenciaSales.Delfi.length === 0}
+                disabled={cuentasPorMedio.transferenciaDelfiMovements.length === 0}
                 onClick={() =>
                   setCuentasMedioSheet({
                     title: 'Transferencia · Delfi',
-                    sales: cuentasPorMedio.transferenciaSales.Delfi,
+                    balanceArs: cuentasPorMedio.transferencia.Delfi,
+                    movements: cuentasPorMedio.transferenciaDelfiMovements,
                   })
                 }
                 type="button"
@@ -1649,11 +1717,12 @@ function HomeScreen({
             <li className="cuentas-row cuentas-row--tap">
               <button
                 className="cuentas-row-button"
-                disabled={cuentasPorMedio.transferenciaSales.Mechi.length === 0}
+                disabled={cuentasPorMedio.transferenciaMechiMovements.length === 0}
                 onClick={() =>
                   setCuentasMedioSheet({
                     title: 'Transferencia · Mechi',
-                    sales: cuentasPorMedio.transferenciaSales.Mechi,
+                    balanceArs: cuentasPorMedio.transferencia.Mechi,
+                    movements: cuentasPorMedio.transferenciaMechiMovements,
                   })
                 }
                 type="button"
@@ -1669,7 +1738,8 @@ function HomeScreen({
                   onClick={() =>
                     setCuentasMedioSheet({
                       title: 'Transferencia · Sin cuenta destino',
-                      sales: cuentasPorMedio.transferenciaSales.sinDefinir,
+                      balanceArs: cuentasPorMedio.transferencia.sinDefinir,
+                      movements: cuentasPorMedio.transferenciaSinDefinirMovements,
                     })
                   }
                   type="button"
@@ -1735,12 +1805,13 @@ function HomeScreen({
 
         {cuentasMedioSheet ? (
           <CuentasMedioDetailSheet
+            balanceArs={cuentasMedioSheet.balanceArs}
+            movements={cuentasMedioSheet.movements}
             onClose={() => setCuentasMedioSheet(null)}
             onSelectSale={(sale) => {
               setCuentasMedioSheet(null)
               onOpenSaleFromCuentas(sale)
             }}
-            sales={cuentasMedioSheet.sales}
             title={cuentasMedioSheet.title}
           />
         ) : null}

@@ -727,6 +727,14 @@ button.stat-card.stat-card--clickable {
   outline-offset: 2px;
 }
 
+.cuentas-detail-row-button--static {
+  cursor: default;
+}
+
+.cuentas-detail-amount--debit {
+  color: var(--red);
+}
+
 .cuentas-detail-row-wrap:last-child .cuentas-detail-row-button {
   border-bottom: none;
 }
