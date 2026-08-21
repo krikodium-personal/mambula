@@ -868,6 +868,71 @@ function App() {
     }
   }
 
+  async function setSalePaymentTierFromDetail(sale: Sale, tier: SalePaymentTier) {
+    const total = getSaleTotal(sale)
+    let paidArs = sale.paidArs
+    let paymentStatus: Sale['paymentStatus'] = sale.paymentStatus
+    let paymentMethod = sale.paymentMethod
+    let transferDestination = sale.transferDestination
+
+    if (tier === 'porPagar') {
+      paidArs = 0
+      paymentStatus = 'pendiente'
+    } else if (tier === 'pagado') {
+      if (total <= 0) {
+        setEditError('La venta no tiene un monto para marcar como pagada.')
+        return
+      }
+      paidArs = total
+      paymentStatus = 'cobrado'
+      if (paymentMethod !== 'transferencia' && paymentMethod !== 'efectivo') {
+        paymentMethod = 'transferencia'
+        transferDestination = transferDestination ?? 'Delfi'
+      }
+    } else {
+      if (total <= 0) {
+        setEditError('La venta no tiene un monto para registrar un pago parcial.')
+        return
+      }
+      if (paidArs <= 0 || paidArs >= total) {
+        paidArs = Math.max(1, Math.floor(total / 2))
+      }
+      paymentStatus = 'parcial'
+    }
+
+    try {
+      setTogglingDeliveryId(sale.id)
+      setEditError(null)
+      const updatedSale = await updateSale({
+        id: sale.id,
+        date: sale.date,
+        buyer: sale.buyer,
+        seller: sale.seller,
+        quantity: sale.quantity,
+        unitPriceArs: sale.unitPriceArs,
+        paidArs,
+        paymentMethod,
+        transferDestination:
+          paymentMethod === 'transferencia' ? transferDestination ?? 'Delfi' : null,
+        paymentStatus,
+        invoiceStatus: sale.invoiceStatus ?? 'pendiente',
+        delivered: sale.delivered ?? null,
+        billingNotes: sale.billingNotes ?? null,
+        kind: sale.kind ?? 'libros',
+      })
+
+      setVentasData((current) => ({
+        ...current,
+        sales: current.sales.map((item) => (item.id === sale.id ? updatedSale : item)),
+      }))
+      setSelectedSale((current) => (current?.id === sale.id ? updatedSale : current))
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : 'No se pudo actualizar el pago.')
+    } finally {
+      setTogglingDeliveryId(null)
+    }
+  }
+
   async function updateSaleInvoiceStatus(sale: Sale, invoiceStatus: NonNullable<Sale['invoiceStatus']>) {
     try {
       setSavingInvoiceSaleId(sale.id)
@@ -995,6 +1060,7 @@ function App() {
             onClose={closeSaleDetail}
             deleting={deletingSaleId === selectedSale.id}
             deleteSale={handleDeleteSale}
+            onSetPaymentTier={setSalePaymentTierFromDetail}
             onToggleDelivered={toggleSaleDelivered}
             startEditingSale={startEditingSale}
             updateInvoiceStatus={updateSaleInvoiceStatus}
@@ -1388,7 +1454,7 @@ function HomeScreen({
 
   const sociasProfitRows = useMemo(() => {
     const acEach = acSliderGains.gananciaPorSociaAcArs
-    /** Shows sin vendedora: solo ingresos cobrados, a partes iguales. */
+    /** Shows cobrados: se reparten en partes iguales (no según vendedora). */
     const showIngresosPagadosArs = sales
       .filter((sale) => sale.kind === 'shows' && sale.paymentStatus === 'cobrado')
       .reduce((sum, sale) => sum + getSaleTotal(sale), 0)
@@ -1439,7 +1505,6 @@ function HomeScreen({
     }
 
     for (const sale of sales) {
-      if (sale.kind === 'shows') continue
       if (sale.paymentStatus !== 'cobrado') continue
 
       if (sale.paymentMethod === 'efectivo') {
@@ -2554,7 +2619,11 @@ function SaleRow({
             <span>{formatDateAr(sale.date)}</span>
             <span>·</span>
             {sale.kind === 'shows' ? (
-              <span>Show</span>
+              <>
+                <span>Show</span>
+                <span>·</span>
+                <span>{sale.seller ?? 'Sin vendedor'}</span>
+              </>
             ) : (
               <>
                 <span>
@@ -2695,6 +2764,7 @@ function SaleDetailSheet({
   deleteSale,
   editError,
   onClose,
+  onSetPaymentTier,
   onToggleDelivered,
   sale,
   savingInvoice,
@@ -2706,6 +2776,7 @@ function SaleDetailSheet({
   deleteSale: (sale: Sale) => void
   editError: string | null
   onClose: () => void
+  onSetPaymentTier: (sale: Sale, tier: SalePaymentTier) => void
   onToggleDelivered: (sale: Sale) => void
   sale: Sale
   savingInvoice: boolean
@@ -2718,6 +2789,8 @@ function SaleDetailSheet({
   const pendingArs = getSalePending(sale)
   const paidPct = totalArs > 0 ? Math.round((sale.paidArs / totalArs) * 100) : 0
   const status = getSaleStatus(sale)
+  const isShowSale = sale.kind === 'shows'
+  const paymentTier = salePaymentTierFromSale(sale)
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
@@ -2755,29 +2828,55 @@ function SaleDetailSheet({
         </div>
 
         <ListGroup title="Desglose">
-          <ListItem label="Unidades" value={sale.quantity?.toString() ?? '-'} />
-          <ListItem label="Precio unitario" value={sale.unitPriceArs === null ? '-' : currencyArsFormatter.format(sale.unitPriceArs)} />
-          <ListItem label="Subtotal" value={currencyArsFormatter.format(totalArs)} />
+          {isShowSale ? (
+            <ListItem label="Precio" value={sale.unitPriceArs === null ? '-' : currencyArsFormatter.format(sale.unitPriceArs)} />
+          ) : (
+            <>
+              <ListItem label="Unidades" value={sale.quantity?.toString() ?? '-'} />
+              <ListItem
+                label="Precio unitario"
+                value={sale.unitPriceArs === null ? '-' : currencyArsFormatter.format(sale.unitPriceArs)}
+              />
+              <ListItem label="Subtotal" value={currencyArsFormatter.format(totalArs)} />
+            </>
+          )}
           <ListItem label="Medio de pago" value={ventasPaymentMethodLabel(sale.paymentMethod)} />
           {sale.paymentMethod === 'transferencia' ? (
             <ListItem label="Cuenta destino" value={sale.transferDestination ?? 'Sin registrar'} />
           ) : null}
           <ListItem label="Vendedor" value={sale.seller ?? '-'} />
         </ListGroup>
-        <ListGroup title="Entrega">
-          <div className="sheet-list-item sheet-list-item-delivery">
-            <span>Estado</span>
-            <DeliveryStatusToggle
-              delivered={isDelivered(sale)}
-              disabled={togglingDelivery}
-              onSelectDelivered={(next) => {
-                if (next === isDelivered(sale)) return
-                void onToggleDelivered(sale)
-              }}
-            />
-          </div>
-          <ListItem label="Nota" value={sale.billingNotes ?? '-'} />
-        </ListGroup>
+        {isShowSale ? (
+          <ListGroup title="Pago">
+            <div className="sheet-list-item sheet-list-item-delivery">
+              <span>Estado</span>
+              <PaymentStatusToggle
+                disabled={togglingDelivery}
+                tier={paymentTier}
+                onSelectTier={(tier) => {
+                  if (tier === paymentTier) return
+                  void onSetPaymentTier(sale, tier)
+                }}
+              />
+            </div>
+            <ListItem label="Nota" value={sale.billingNotes ?? '-'} />
+          </ListGroup>
+        ) : (
+          <ListGroup title="Entrega">
+            <div className="sheet-list-item sheet-list-item-delivery">
+              <span>Estado</span>
+              <DeliveryStatusToggle
+                delivered={isDelivered(sale)}
+                disabled={togglingDelivery}
+                onSelectDelivered={(next) => {
+                  if (next === isDelivered(sale)) return
+                  void onToggleDelivered(sale)
+                }}
+              />
+            </div>
+            <ListItem label="Nota" value={sale.billingNotes ?? '-'} />
+          </ListGroup>
+        )}
         <ListGroup title="Facturación">
           <div className="sheet-list-item">
             <span>Estado</span>
@@ -2942,7 +3041,7 @@ function SaleDraftSheet({
         ...draft,
         kind,
         date: draft.date || todayIsoDate(),
-        seller: '',
+        seller: draft.seller.trim() || 'Delfi',
         quantity: '',
         unitPriceArs: '',
         delivered: '',
@@ -3018,29 +3117,27 @@ function SaleDraftSheet({
               </div>
             ) : null}
 
-            {!isShowSale ? (
-              <div className="new-sale-field">
-                <span className="new-sale-field-label">Vendedor</span>
-                {useSellerSelect ? (
-                  <SellerSelect value={draft.seller} onChange={(seller) => setDraft({ ...draft, seller })} />
-                ) : (
-                  <Segmented<SaleDraftSeller>
-                    active={
-                      SALE_DRAFT_SELLERS.includes(draft.seller as SaleDraftSeller)
-                        ? (draft.seller as SaleDraftSeller)
-                        : 'Delfi'
-                    }
-                    onChange={(seller) => setDraft({ ...draft, seller })}
-                    options={[
-                      { key: 'Delfi', label: 'Delfi' },
-                      { key: 'Mechi', label: 'Mechi' },
-                      { key: 'Susan', label: 'Susan' },
-                      { key: 'AC', label: 'AC' },
-                    ]}
-                  />
-                )}
-              </div>
-            ) : null}
+            <div className="new-sale-field">
+              <span className="new-sale-field-label">Vendedor</span>
+              {useSellerSelect ? (
+                <SellerSelect value={draft.seller} onChange={(seller) => setDraft({ ...draft, seller })} />
+              ) : (
+                <Segmented<SaleDraftSeller>
+                  active={
+                    SALE_DRAFT_SELLERS.includes(draft.seller as SaleDraftSeller)
+                      ? (draft.seller as SaleDraftSeller)
+                      : 'Delfi'
+                  }
+                  onChange={(seller) => setDraft({ ...draft, seller })}
+                  options={[
+                    { key: 'Delfi', label: 'Delfi' },
+                    { key: 'Mechi', label: 'Mechi' },
+                    { key: 'Susan', label: 'Susan' },
+                    { key: 'AC', label: 'AC' },
+                  ]}
+                />
+              )}
+            </div>
 
             {minimalEncargoCreate ? (
               <div className="new-sale-field">
@@ -4377,6 +4474,52 @@ function DeliveryStatusToggle({
   )
 }
 
+function PaymentStatusToggle({
+  disabled,
+  onSelectTier,
+  tier,
+}: {
+  disabled: boolean
+  onSelectTier: (tier: SalePaymentTier) => void
+  tier: SalePaymentTier
+}) {
+  return (
+    <div
+      aria-label="Estado de pago"
+      className={`payment-status-toggle payment-status-toggle--${tier}`}
+      role="group"
+    >
+      <button
+        aria-pressed={tier === 'porPagar'}
+        className={tier === 'porPagar' ? 'active' : undefined}
+        disabled={disabled}
+        onClick={() => onSelectTier('porPagar')}
+        type="button"
+      >
+        Por pagar
+      </button>
+      <button
+        aria-pressed={tier === 'parcial'}
+        className={tier === 'parcial' ? 'active' : undefined}
+        disabled={disabled}
+        onClick={() => onSelectTier('parcial')}
+        type="button"
+      >
+        Parcial
+      </button>
+      <button
+        aria-pressed={tier === 'pagado'}
+        className={tier === 'pagado' ? 'active' : undefined}
+        disabled={disabled}
+        onClick={() => onSelectTier('pagado')}
+        type="button"
+      >
+        Pagado
+      </button>
+    </div>
+  )
+}
+
 function TabBar({ active, onChange }: { active: AppTab; onChange: (tab: AppTab) => void }) {
   const tabs: Array<{ key: AppTab; label: string; icon: IconName }> = [
     { key: 'home', label: 'Inicio', icon: 'home' },
@@ -5016,7 +5159,7 @@ function draftToSaleInput(
     kind: isShow ? 'shows' : 'libros',
     date,
     buyer: draft.buyer.trim(),
-    seller: isShow ? null : emptyToNull(draft.seller),
+    seller: emptyToNull(draft.seller),
     quantity: isShow ? 1 : parseOptionalNumber(draft.quantity),
     unitPriceArs,
     paidArs: resolved.paidArs,

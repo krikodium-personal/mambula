@@ -2056,6 +2056,69 @@ button.stat-card.stat-card--clickable {
   color: var(--label);
 }
 
+.payment-status-toggle {
+  background: var(--gray-fill);
+  border-radius: 10px;
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 3px;
+  max-width: 100%;
+  padding: 3px;
+}
+
+.payment-status-toggle--porPagar {
+  background: rgba(255, 204, 0, 0.35);
+}
+
+.payment-status-toggle--parcial {
+  background: rgba(255, 149, 0, 0.28);
+}
+
+.payment-status-toggle--pagado {
+  background: rgba(52, 199, 89, 0.28);
+}
+
+.payment-status-toggle button {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--label-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  padding: 6px 8px;
+  white-space: nowrap;
+}
+
+.payment-status-toggle button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.payment-status-toggle button.active {
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.payment-status-toggle--porPagar button.active {
+  color: #b45300;
+}
+
+.payment-status-toggle--parcial button.active {
+  color: #c2410c;
+}
+
+.payment-status-toggle--pagado button.active {
+  color: #1f7a3a;
+}
+
+.payment-status-toggle button:not(.active):hover:not(:disabled) {
+  color: var(--label);
+}
+
 .sheet-select {
   background: var(--gray-fill);
   border: 0;
