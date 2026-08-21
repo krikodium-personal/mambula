@@ -43,6 +43,7 @@ export function computeCuentasMedioGrossFromSales(sales: Sale[]): CuentasMedioGr
   let transferenciaSinDefinir = 0
 
   for (const sale of sales) {
+    if (sale.kind === 'shows') continue
     if (sale.paymentStatus !== 'cobrado') continue
 
     if (sale.paymentMethod === 'efectivo') {

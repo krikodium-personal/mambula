@@ -44,8 +44,9 @@ export default function ProfitCard({ socias }: { socias: ProfitSociaInput[] }) {
         <div className="profit-card-eyebrow">Resumen</div>
         <div className="profit-card-title">Profit</div>
         <p className="profit-card-lead">
-          Por socia: ganancia del esquema <strong>Abrazandocuentos</strong> (parte del pool socias) más ganancia de{' '}
-          <strong>Ventas Mambula</strong>, menos los <strong>gastos</strong> cargados en la pestaña Gastos.
+          Por socia: ganancia del esquema <strong>Abrazandocuentos</strong> (parte del pool socias) más
+          ganancia de <strong>Ventas Mambula</strong> e ingresos de <strong>Shows</strong> cobrados (a
+          partes iguales), menos los <strong>gastos</strong> de libros y shows.
         </p>
       </div>
 

@@ -125,9 +125,13 @@ export function computeAbrInventorySplit(
  * - `parcial`: solo lo registrado en `paid_ars`.
  */
 export function liquidacionVentasRevenueArs(
-  sale: Pick<Sale, 'paymentStatus' | 'quantity' | 'unitPriceArs' | 'paidArs'>,
+  sale: Pick<Sale, 'paymentStatus' | 'quantity' | 'unitPriceArs' | 'paidArs' | 'kind'>,
 ): number {
   if (sale.paymentStatus === 'cobrado') {
+    if (sale.kind === 'shows') {
+      return Math.max(0, sale.unitPriceArs ?? 0)
+    }
+
     const q = sale.quantity ?? 0
     const p = sale.unitPriceArs ?? 0
 

@@ -10,7 +10,7 @@ export function isAcChannelSeller(seller: string | null | undefined): boolean {
 }
 
 export function acChannelSales(sales: Sale[]): Sale[] {
-  return sales.filter((sale) => isAcChannelSeller(sale.seller))
+  return sales.filter((sale) => sale.kind !== 'shows' && isAcChannelSeller(sale.seller))
 }
 
 export function totalAcChannelSaleQuantity(sales: Sale[]): number {

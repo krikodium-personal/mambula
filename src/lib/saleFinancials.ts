@@ -1,10 +1,20 @@
 import type { Sale } from '../types'
 
-export function getSaleTotal(sale: Pick<Sale, 'quantity' | 'unitPriceArs'>): number {
+export function isBookSale(sale: Pick<Sale, 'kind'>): boolean {
+  return sale.kind !== 'shows'
+}
+
+export function getSaleTotal(sale: Pick<Sale, 'quantity' | 'unitPriceArs' | 'kind'>): number {
+  if (sale.kind === 'shows') {
+    return sale.unitPriceArs ?? 0
+  }
+
   return (sale.quantity ?? 0) * (sale.unitPriceArs ?? 0)
 }
 
-export function getSalePending(sale: Pick<Sale, 'quantity' | 'unitPriceArs' | 'paidArs'>): number {
+export function getSalePending(
+  sale: Pick<Sale, 'quantity' | 'unitPriceArs' | 'paidArs' | 'kind'>,
+): number {
   const total = getSaleTotal(sale)
 
   if (total === 0 && sale.paidArs === 0) return 0
@@ -20,7 +30,11 @@ export function getSaleStatus(sale: Sale): 'pagado' | 'parcial' | 'pendiente' {
   if (sale.paymentStatus === 'cobrado') return 'pagado'
   if (sale.paymentStatus === 'parcial') return 'parcial'
 
-  if (sale.quantity === null || sale.unitPriceArs === null) return 'pendiente'
+  if (sale.kind === 'shows') {
+    if (sale.unitPriceArs === null) return 'pendiente'
+  } else if (sale.quantity === null || sale.unitPriceArs === null) {
+    return 'pendiente'
+  }
 
   const pending = getSalePending(sale)
 

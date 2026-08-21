@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { ABRAZANDOCUENTOS_REFERENCE_UNIT_PRICE_ARS } from '../data/partnerSplits'
 import { projectConfig, sales, stockAllocations } from '../data/ventas'
 import { supabase } from './supabase'
-import type { AcSchemeSaleRecord, ProjectConfig, Sale, StockAllocation } from '../types'
+import type { AcSchemeSaleRecord, ProjectConfig, Sale, SaleKind, StockAllocation } from '../types'
 
 const AC_SCHEME_SOLD_UNITS_LS_KEY = 'mambula_ac_scheme_sold_units'
 const AC_SCHEME_SALES_LS_KEY = 'mambula_ac_scheme_sales_json'
@@ -47,6 +47,7 @@ type SaleRow = {
   invoice_status: NonNullable<Sale['invoiceStatus']>
   delivered: string | null
   billing_notes: string | null
+  sale_kind?: string | null
   /** Orden de fila en Excel; null = alta manual (va al final). */
   sheet_position: number | null
 }
@@ -54,6 +55,7 @@ type SaleRow = {
 export type SaleUpdateInput = Pick<
   Sale,
   | 'id'
+  | 'date'
   | 'buyer'
   | 'seller'
   | 'quantity'
@@ -65,6 +67,7 @@ export type SaleUpdateInput = Pick<
   | 'invoiceStatus'
   | 'delivered'
   | 'billingNotes'
+  | 'kind'
 >
 
 export type SaleCreateInput = Omit<SaleUpdateInput, 'id'>
@@ -360,7 +363,7 @@ export async function createSale(input: SaleCreateInput): Promise<Sale> {
   const { data, error } = await supabase
     .from('sales')
     .insert({
-      sold_at: new Date().toISOString().slice(0, 10),
+      sold_at: input.date,
       buyer: input.buyer,
       seller: input.seller,
       quantity: input.quantity,
@@ -373,6 +376,7 @@ export async function createSale(input: SaleCreateInput): Promise<Sale> {
       invoice_status: input.invoiceStatus ?? 'pendiente',
       delivered: input.delivered,
       billing_notes: input.billingNotes,
+      sale_kind: input.kind,
     })
     .select('*')
     .single()
@@ -429,6 +433,7 @@ export async function updateSale(input: SaleUpdateInput): Promise<Sale> {
   const { data, error } = await supabase
     .from('sales')
     .update({
+      sold_at: input.date,
       buyer: input.buyer,
       seller: input.seller,
       quantity: input.quantity,
@@ -441,6 +446,7 @@ export async function updateSale(input: SaleUpdateInput): Promise<Sale> {
       invoice_status: input.invoiceStatus ?? 'pendiente',
       delivered: input.delivered,
       billing_notes: input.billingNotes,
+      sale_kind: input.kind,
     })
     .eq('id', input.id)
     .select('*')
@@ -591,6 +597,10 @@ function normalizePaymentMethod(raw: string | null | undefined): Sale['paymentMe
   return null
 }
 
+function normalizeSaleKind(raw: string | null | undefined): SaleKind {
+  return raw === 'shows' ? 'shows' : 'libros'
+}
+
 function mapSale(row: SaleRow): Sale {
   return {
     id: row.id,
@@ -606,5 +616,6 @@ function mapSale(row: SaleRow): Sale {
     invoiceStatus: normalizeInvoiceStatus(row.invoice_status),
     delivered: row.delivered,
     billingNotes: row.billing_notes,
+    kind: normalizeSaleKind(row.sale_kind),
   }
 }

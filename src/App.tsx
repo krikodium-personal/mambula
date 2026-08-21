@@ -24,6 +24,7 @@ import CuentasMedioSettlementModal from './components/CuentasMedioSettlementModa
 import CuentasMedioTransactionsSheet from './components/CuentasMedioTransactionsSheet'
 import LiquidacionesVentasCard from './components/LiquidacionesVentasCard'
 import ProfitCard from './components/ProfitCard'
+import ShowsCard, { showExpenseLabel, showSaleLabel } from './components/ShowsCard'
 import {
   EncargosScreenSkeleton,
   GastosScreenSkeleton,
@@ -64,6 +65,7 @@ import { isSupabaseConfigured } from './lib/supabase'
 import {
   createExpense,
   loadExpenses,
+  updateExpense,
   type Expense,
 } from './lib/expensesRepository'
 import { createPartnerSettlement, loadPartnerSettlements } from './lib/partnerSettlementsRepository'
@@ -89,6 +91,7 @@ import type {
   PartnerGainBreakdown,
   PartnerSettlement,
   Sale,
+  SaleKind,
   SaleTransferDestination,
   SplitPartnerKey,
   StockAllocation,
@@ -105,6 +108,9 @@ type AppTab = 'home' | 'ventas' | 'encargos' | 'promo' | 'gastos'
 /** UI del modal de venta; se mapea a `paymentStatus` + `paidArs` al guardar. */
 type SalePaymentTier = 'porPagar' | 'parcial' | 'pagado'
 type SaleDraft = {
+  kind: SaleKind
+  /** Fecha del show / venta (`YYYY-MM-DD`). Obligatorio en shows. */
+  date: string
   buyer: string
   seller: string
   quantity: string
@@ -120,7 +126,7 @@ type SaleDraft = {
 }
 
 /** Campo a resaltar cuando `edit-error` viene del guardado del borrador de venta. */
-type SaleDraftErrorField = 'buyer' | 'quantity' | 'saleLine' | 'partialPaid' | 'paymentMethod'
+type SaleDraftErrorField = 'buyer' | 'date' | 'quantity' | 'saleLine' | 'partialPaid' | 'paymentMethod'
 type StockAllocationDraft = Record<string, { copies: string; boxes: string }>
 
 /** Filas de `stock_allocations` que no se muestran en el inventario del Home (se gestionan aparte). */
@@ -159,11 +165,15 @@ type PromoEditDraft = {
   entregadoPor: PromoDeliveredBy
 }
 type ExpenseDraft = {
+  id: string | null
+  year: number
+  month: string
   concept: string
   pesos: string
   rate: string
   usd: string
   payer: string
+  kind: SaleKind
 }
 
 const sociasProfitOrder = ['Delfi', 'Mechi', 'Susan'] as const satisfies readonly SplitPartnerKey[]
@@ -179,9 +189,15 @@ function expenseRowArs(item: Expense, fallbackArsPerUsd: number): number {
   return item.usd * rate
 }
 
-function sumExpensesArsForPayer(expenses: Expense[], payer: string, fallbackArsPerUsd: number): number {
+function sumExpensesArsForPayer(
+  expenses: Expense[],
+  payer: string,
+  fallbackArsPerUsd: number,
+  kind: 'libros' | 'shows' | 'all' = 'libros',
+): number {
   return expenses
     .filter((item) => item.payer === payer)
+    .filter((item) => kind === 'all' || (item.kind ?? 'libros') === kind)
     .reduce((sum, item) => sum + expenseRowArs(item, fallbackArsPerUsd), 0)
 }
 
@@ -448,17 +464,28 @@ function App() {
   }, [])
 
   const { projectConfig, sales, stockAllocations } = ventasData
-  const soldCopies = sales.reduce((total, sale) => total + (sale.quantity ?? 0), 0)
-  const paidSoldCopies = useMemo(() => sales.reduce((sum, s) => sum + paidCopiesForSale(s), 0), [sales])
+  const bookSales = useMemo(() => sales.filter((sale) => sale.kind !== 'shows'), [sales])
+  const soldCopies = bookSales.reduce((total, sale) => total + (sale.quantity ?? 0), 0)
+  const paidSoldCopies = useMemo(
+    () => bookSales.reduce((sum, s) => sum + paidCopiesForSale(s), 0),
+    [bookSales],
+  )
 
-  /** Suma `paid_ars`: todas las ventas cargadas (tras paginar la tabla `sales` en Supabase). */
-  const salesPaidArsTotal = useMemo(() => sales.reduce((sum, sale) => sum + sale.paidArs, 0), [sales])
+  /** Suma `paid_ars` de ventas de libros (excluye shows). */
+  const salesPaidArsTotal = useMemo(
+    () => bookSales.reduce((sum, sale) => sum + sale.paidArs, 0),
+    [bookSales],
+  )
 
   const ventasTabSales = useMemo(() => sales.filter((sale) => !isEncargoSale(sale)), [sales])
 
   const ventasLiquidacionScopedSales = useMemo(
     () =>
-      ventasTabSales.filter((s) => s.paymentStatus === 'cobrado' || s.paymentStatus === 'parcial'),
+      ventasTabSales.filter(
+        (s) =>
+          s.kind !== 'shows' &&
+          (s.paymentStatus === 'cobrado' || s.paymentStatus === 'parcial'),
+      ),
     [ventasTabSales],
   )
 
@@ -617,6 +644,12 @@ function App() {
       return
     }
 
+    if (saleDraft.kind === 'shows' && !isValidIsoDate(saleDraft.date)) {
+      setEditError('Completá la fecha del show.')
+      setSaleDraftErrorField('date')
+      return
+    }
+
     const baselineSale = ventasData.sales.find((s) => s.id === saleId)
     const deliveredSi = (saleDraft.delivered ?? '').trim().toLowerCase() === 'si'
     const encargoOpts = {
@@ -654,18 +687,7 @@ function App() {
 
     const input: SaleUpdateInput = {
       id: saleId,
-      buyer: saleDraft.buyer.trim(),
-      seller: emptyToNull(saleDraft.seller),
-      quantity: parseOptionalNumber(saleDraft.quantity),
-      unitPriceArs: parseOptionalNumber(saleDraft.unitPriceArs),
-      paidArs: resolvedPayment.paidArs,
-      paymentMethod: saleDraft.paymentMethod,
-      transferDestination:
-        saleDraft.paymentMethod === 'transferencia' ? saleDraft.transferDestination : null,
-      paymentStatus: resolvedPayment.paymentStatus,
-      invoiceStatus: saleDraft.invoiceStatus,
-      delivered: emptyToNull(saleDraft.delivered),
-      billingNotes: emptyToNull(saleDraft.billingNotes),
+      ...draftToSaleInput(saleDraft, encargoOpts),
     }
 
     try {
@@ -703,6 +725,12 @@ function App() {
     if (!createDraft.buyer.trim()) {
       setEditError('Completá el nombre del comprador.')
       setSaleDraftErrorField('buyer')
+      return
+    }
+
+    if (createDraft.kind === 'shows' && !isValidIsoDate(createDraft.date)) {
+      setEditError('Completá la fecha del show.')
+      setSaleDraftErrorField('date')
       return
     }
 
@@ -812,6 +840,7 @@ function App() {
       setEditError(null)
       const updatedSale = await updateSale({
         id: sale.id,
+        date: sale.date,
         buyer: sale.buyer,
         seller: sale.seller,
         quantity: sale.quantity,
@@ -824,6 +853,7 @@ function App() {
         invoiceStatus: sale.invoiceStatus ?? 'pendiente',
         delivered: nextDelivered,
         billingNotes: sale.billingNotes ?? null,
+        kind: sale.kind ?? 'libros',
       })
 
       setVentasData((current) => ({
@@ -1325,13 +1355,49 @@ function HomeScreen({
     [expenses],
   )
 
+  const showsSummary = useMemo(() => {
+    const showSaleRows = sales.filter((sale) => sale.kind === 'shows')
+    const showExpenseRows = expenses.filter((item) => (item.kind ?? 'libros') === 'shows')
+
+    const incomeRows = showSaleRows
+      .map((sale) => ({
+        id: sale.id,
+        label: showSaleLabel(sale),
+        amountArs: getSaleTotal(sale),
+      }))
+      .filter((row) => row.amountArs > 0)
+      .sort((a, b) => b.amountArs - a.amountArs)
+
+    const expenseRowsMapped = showExpenseRows
+      .map((item) => ({
+        id: item.id,
+        label: showExpenseLabel(item),
+        amountArs: expenseRowArs(item, expenseFallbackArsPerUsd),
+        payer: item.payer,
+      }))
+      .filter((row) => row.amountArs > 0)
+      .sort((a, b) => b.amountArs - a.amountArs)
+
+    return {
+      ingresosArs: incomeRows.reduce((sum, row) => sum + row.amountArs, 0),
+      egresosArs: expenseRowsMapped.reduce((sum, row) => sum + row.amountArs, 0),
+      incomeRows,
+      expenseRows: expenseRowsMapped,
+    }
+  }, [expenseFallbackArsPerUsd, expenses, sales])
+
   const sociasProfitRows = useMemo(() => {
     const acEach = acSliderGains.gananciaPorSociaAcArs
+    /** Shows sin vendedora: solo ingresos cobrados, a partes iguales. */
+    const showIngresosPagadosArs = sales
+      .filter((sale) => sale.kind === 'shows' && sale.paymentStatus === 'cobrado')
+      .reduce((sum, sale) => sum + getSaleTotal(sale), 0)
+    const showIngresosEachArs = showIngresosPagadosArs / sociasProfitOrder.length
 
     return sociasProfitOrder.map((partner) => {
       const ventasRow = partnerGainRows.find((row) => row.partner === partner)
-      const gananciaMambulaArs = ventasRow?.totalGainArs ?? 0
-      const gastosArs = sumExpensesArsForPayer(expenses, partner, expenseFallbackArsPerUsd)
+      const gananciaMambulaArs = (ventasRow?.totalGainArs ?? 0) + showIngresosEachArs
+      const gastosArs = sumExpensesArsForPayer(expenses, partner, expenseFallbackArsPerUsd, 'all')
 
       return {
         partner,
@@ -1345,6 +1411,7 @@ function HomeScreen({
     expenseFallbackArsPerUsd,
     expenses,
     partnerGainRows,
+    sales,
   ])
 
   const cuentasMedioGross = useMemo(() => computeCuentasMedioGrossFromSales(sales), [sales])
@@ -1372,6 +1439,7 @@ function HomeScreen({
     }
 
     for (const sale of sales) {
+      if (sale.kind === 'shows') continue
       if (sale.paymentStatus !== 'cobrado') continue
 
       if (sale.paymentMethod === 'efectivo') {
@@ -1647,6 +1715,13 @@ function HomeScreen({
             </div>
           ) : null}
         </div>
+
+        <ShowsCard
+          egresosArs={showsSummary.egresosArs}
+          expenseRows={showsSummary.expenseRows}
+          incomeRows={showsSummary.incomeRows}
+          ingresosArs={showsSummary.ingresosArs}
+        />
 
         <div className="ios-card cuentas-card">
           <div className="cuentas-card-head">
@@ -2471,15 +2546,24 @@ function SaleRow({
       role="button"
       tabIndex={0}
     >
+      {sale.kind === 'shows' ? <ShowKindIcon /> : null}
       <div className="sale-row-main">
         <div className="sale-row-left">
           <strong>{sale.buyer}</strong>
           <div className="sale-row-meta">
             <span>{formatDateAr(sale.date)}</span>
             <span>·</span>
-            <span>{sale.quantity ?? '-'} {sale.quantity === 1 ? 'unidad' : 'unidades'}</span>
-            <span>·</span>
-            <span>{sale.seller ?? 'Sin vendedor'}</span>
+            {sale.kind === 'shows' ? (
+              <span>Show</span>
+            ) : (
+              <>
+                <span>
+                  {sale.quantity ?? '-'} {sale.quantity === 1 ? 'unidad' : 'unidades'}
+                </span>
+                <span>·</span>
+                <span>{sale.seller ?? 'Sin vendedor'}</span>
+              </>
+            )}
           </div>
         </div>
         <div className="sale-row-side">
@@ -2494,14 +2578,16 @@ function SaleRow({
       </div>
       <div className="sale-row-actions">
         <InvoiceIcon status={sale.invoiceStatus ?? 'pendiente'} />
-        <DeliveryIndicator
-          delivered={isDelivered(sale)}
-          disabled={togglingDelivery}
-          onClick={(event) => {
-            event.stopPropagation()
-            onToggleDelivered(sale)
-          }}
-        />
+        {sale.kind === 'shows' ? null : (
+          <DeliveryIndicator
+            delivered={isDelivered(sale)}
+            disabled={togglingDelivery}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleDelivered(sale)
+            }}
+          />
+        )}
       </div>
     </div>
   )
@@ -2833,9 +2919,13 @@ function SaleDraftSheet({
       ? draft.paymentMethod
       : null
 
+  const isShowSale = !minimalEncargoCreate && draft.kind === 'shows'
+  const showKindToggle = !minimalEncargoCreate
+
   const lineTotalArs = saleLineTotalArsDraft(draft)
 
   const highlightBuyer = errorField === 'buyer'
+  const highlightDate = errorField === 'date'
   const highlightQuantity = errorField === 'quantity' || errorField === 'saleLine'
   const highlightUnitPriceRow = errorField === 'saleLine'
   const highlightPartialPaid = errorField === 'partialPaid'
@@ -2843,6 +2933,32 @@ function SaleDraftSheet({
 
   const inputCls = (highlight: boolean) =>
     highlight ? 'new-sale-input new-sale-input--error' : 'new-sale-input'
+
+  function setSaleKind(kind: SaleKind) {
+    if (kind === draft.kind) return
+
+    if (kind === 'shows') {
+      setDraft({
+        ...draft,
+        kind,
+        date: draft.date || todayIsoDate(),
+        seller: '',
+        quantity: '',
+        unitPriceArs: '',
+        delivered: '',
+      })
+      return
+    }
+
+    setDraft({
+      ...draft,
+      kind,
+      seller: draft.seller.trim() || 'Delfi',
+      quantity: draft.quantity,
+      unitPriceArs: draft.unitPriceArs.trim() || '15000',
+      delivered: draft.delivered.trim() || 'NO',
+    })
+  }
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
@@ -2860,7 +2976,7 @@ function SaleDraftSheet({
           <div className="new-sale-stack">
             <div className="new-sale-field">
               <span className="new-sale-field-label" id="new-sale-buyer-label">
-                Comprador
+                {isShowSale ? 'Nombre' : 'Comprador'}
               </span>
               <input
                 aria-invalid={highlightBuyer}
@@ -2872,27 +2988,59 @@ function SaleDraftSheet({
               />
             </div>
 
-            <div className="new-sale-field">
-              <span className="new-sale-field-label">Vendedor</span>
-              {useSellerSelect ? (
-                <SellerSelect value={draft.seller} onChange={(seller) => setDraft({ ...draft, seller })} />
-              ) : (
-                <Segmented<SaleDraftSeller>
-                  active={
-                    SALE_DRAFT_SELLERS.includes(draft.seller as SaleDraftSeller)
-                      ? (draft.seller as SaleDraftSeller)
-                      : 'Delfi'
-                  }
-                  onChange={(seller) => setDraft({ ...draft, seller })}
+            {showKindToggle ? (
+              <div className="new-sale-field">
+                <span className="new-sale-field-label">Tipo</span>
+                <Segmented<SaleKind>
+                  active={draft.kind}
+                  onChange={setSaleKind}
                   options={[
-                    { key: 'Delfi', label: 'Delfi' },
-                    { key: 'Mechi', label: 'Mechi' },
-                    { key: 'Susan', label: 'Susan' },
-                    { key: 'AC', label: 'AC' },
+                    { key: 'libros', label: 'Libros' },
+                    { key: 'shows', label: 'Shows' },
                   ]}
                 />
-              )}
-            </div>
+              </div>
+            ) : null}
+
+            {isShowSale ? (
+              <div className="new-sale-field">
+                <span className="new-sale-field-label" id="new-sale-show-date-label">
+                  Fecha
+                </span>
+                <input
+                  aria-invalid={highlightDate}
+                  aria-labelledby="new-sale-show-date-label"
+                  className={inputCls(highlightDate)}
+                  type="date"
+                  value={draft.date}
+                  onChange={(event) => setDraft({ ...draft, date: event.target.value })}
+                />
+              </div>
+            ) : null}
+
+            {!isShowSale ? (
+              <div className="new-sale-field">
+                <span className="new-sale-field-label">Vendedor</span>
+                {useSellerSelect ? (
+                  <SellerSelect value={draft.seller} onChange={(seller) => setDraft({ ...draft, seller })} />
+                ) : (
+                  <Segmented<SaleDraftSeller>
+                    active={
+                      SALE_DRAFT_SELLERS.includes(draft.seller as SaleDraftSeller)
+                        ? (draft.seller as SaleDraftSeller)
+                        : 'Delfi'
+                    }
+                    onChange={(seller) => setDraft({ ...draft, seller })}
+                    options={[
+                      { key: 'Delfi', label: 'Delfi' },
+                      { key: 'Mechi', label: 'Mechi' },
+                      { key: 'Susan', label: 'Susan' },
+                      { key: 'AC', label: 'AC' },
+                    ]}
+                  />
+                )}
+              </div>
+            ) : null}
 
             {minimalEncargoCreate ? (
               <div className="new-sale-field">
@@ -2911,34 +3059,58 @@ function SaleDraftSheet({
               </div>
             ) : (
               <>
-                <div className="new-sale-field">
-                  <span className="new-sale-field-label" id="new-sale-qty-label-full">
-                    Unidades
-                  </span>
-                  <input
-                    aria-invalid={highlightQuantity}
-                    aria-labelledby="new-sale-qty-label-full"
-                    className={inputCls(highlightQuantity)}
-                    inputMode="numeric"
-                    placeholder="0"
-                    value={draft.quantity}
-                    onChange={(event) => setDraft({ ...draft, quantity: event.target.value })}
-                  />
-                </div>
-
-                <div className={`new-sale-field${highlightUnitPriceRow ? ' new-sale-field--error' : ''}`}>
-                  <span className="new-sale-field-label">Precio unitario</span>
-                  <Segmented<string>
-                    active={unitPriceSegmentActive(draft.unitPriceArs)}
-                    onChange={(key) => setDraft({ ...draft, unitPriceArs: unitPriceFromSegmentKey(key) })}
-                    options={unitPriceSegmentOptions(draft.unitPriceArs)}
-                  />
-                  {lineTotalArs !== null ? (
-                    <span className="new-sale-field-hint">
-                      Total de la venta: {currencyArsFormatter.format(lineTotalArs)}
+                {!isShowSale ? (
+                  <div className="new-sale-field">
+                    <span className="new-sale-field-label" id="new-sale-qty-label-full">
+                      Unidades
                     </span>
-                  ) : null}
-                </div>
+                    <input
+                      aria-invalid={highlightQuantity}
+                      aria-labelledby="new-sale-qty-label-full"
+                      className={inputCls(highlightQuantity)}
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={draft.quantity}
+                      onChange={(event) => setDraft({ ...draft, quantity: event.target.value })}
+                    />
+                  </div>
+                ) : null}
+
+                {isShowSale ? (
+                  <div className={`new-sale-field${highlightUnitPriceRow ? ' new-sale-field--error' : ''}`}>
+                    <span className="new-sale-field-label" id="new-sale-show-price-label">
+                      Precio
+                    </span>
+                    <div className="expense-amount-input expense-amount-input--ars">
+                      <span aria-hidden className="expense-amount-prefix">
+                        $
+                      </span>
+                      <input
+                        aria-invalid={highlightUnitPriceRow}
+                        aria-labelledby="new-sale-show-price-label"
+                        className={inputCls(highlightUnitPriceRow)}
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={draft.unitPriceArs}
+                        onChange={(event) => setDraft({ ...draft, unitPriceArs: event.target.value })}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className={`new-sale-field${highlightUnitPriceRow ? ' new-sale-field--error' : ''}`}>
+                    <span className="new-sale-field-label">Precio unitario</span>
+                    <Segmented<string>
+                      active={unitPriceSegmentActive(draft.unitPriceArs)}
+                      onChange={(key) => setDraft({ ...draft, unitPriceArs: unitPriceFromSegmentKey(key) })}
+                      options={unitPriceSegmentOptions(draft.unitPriceArs)}
+                    />
+                    {lineTotalArs !== null ? (
+                      <span className="new-sale-field-hint">
+                        Total de la venta: {currencyArsFormatter.format(lineTotalArs)}
+                      </span>
+                    ) : null}
+                  </div>
+                )}
 
                 <div className="new-sale-field">
                   <span className="new-sale-field-label">Pago</span>
@@ -2966,15 +3138,20 @@ function SaleDraftSheet({
                     <span className="new-sale-field-label" id="new-sale-partial-paid-label">
                       Pagado:
                     </span>
-                    <input
-                      aria-invalid={highlightPartialPaid}
-                      aria-labelledby="new-sale-partial-paid-label"
-                      className={inputCls(highlightPartialPaid)}
-                      inputMode="decimal"
-                      placeholder="0"
-                      value={draft.partialPaidArs}
-                      onChange={(event) => setDraft({ ...draft, partialPaidArs: event.target.value })}
-                    />
+                    <div className="expense-amount-input expense-amount-input--ars">
+                      <span aria-hidden className="expense-amount-prefix">
+                        $
+                      </span>
+                      <input
+                        aria-invalid={highlightPartialPaid}
+                        aria-labelledby="new-sale-partial-paid-label"
+                        className={inputCls(highlightPartialPaid)}
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={draft.partialPaidArs}
+                        onChange={(event) => setDraft({ ...draft, partialPaidArs: event.target.value })}
+                      />
+                    </div>
                     {lineTotalArs !== null ? (
                       <span className="new-sale-field-hint">
                         Menor que {currencyArsFormatter.format(lineTotalArs)}
@@ -3002,7 +3179,15 @@ function SaleDraftSheet({
                         setDraft({ ...draft, paymentMethod: null })
                         return
                       }
-                      setDraft({ ...draft, paymentMethod })
+
+                      setDraft({
+                        ...draft,
+                        paymentMethod,
+                        transferDestination:
+                          paymentMethod === 'transferencia'
+                            ? draft.transferDestination
+                            : draft.transferDestination,
+                      })
                     }}
                     options={[
                       { key: 'transferencia', label: 'Transferencia' },
@@ -3040,17 +3225,21 @@ function SaleDraftSheet({
                   />
                 </div>
 
-                <div className="new-sale-field">
-                  <span className="new-sale-field-label">Entregado</span>
-                  <Segmented<'SI' | 'NO'>
-                    active={draft.delivered.trim().toUpperCase() === 'SI' ? 'SI' : 'NO'}
-                    onChange={(delivered) => setDraft({ ...draft, delivered })}
-                    options={[
-                      { key: 'NO', label: 'No' },
-                      { key: 'SI', label: 'Sí' },
-                    ]}
-                  />
-                </div>
+                {!isShowSale ? (
+                  <div className="new-sale-field">
+                    <span className="new-sale-field-label">Entregado</span>
+                    <Segmented<'SI' | 'NO'>
+                      active={
+                        (draft.delivered ?? '').trim().toLowerCase() === 'si' ? 'SI' : 'NO'
+                      }
+                      onChange={(key) => setDraft({ ...draft, delivered: key })}
+                      options={[
+                        { key: 'NO', label: 'No' },
+                        { key: 'SI', label: 'Sí' },
+                      ]}
+                    />
+                  </div>
+                ) : null}
 
                 <div className="new-sale-field">
                   <span className="new-sale-field-label" id="new-sale-notes-label">
@@ -3067,11 +3256,14 @@ function SaleDraftSheet({
               </>
             )}
           </div>
+
           {editError ? <p className="edit-error">{editError}</p> : null}
           <div className="edit-actions">
-            <button className="secondary-button" onClick={onClose} type="button">Cancelar</button>
+            <button className="secondary-button" disabled={submitting} onClick={onClose} type="button">
+              Cancelar
+            </button>
             <button className="primary-button" disabled={submitting} onClick={onSubmit} type="button">
-              {submitting ? 'Guardando...' : submitLabel}
+              {submitting ? 'Guardando…' : submitLabel}
             </button>
           </div>
         </div>
@@ -3079,6 +3271,7 @@ function SaleDraftSheet({
     </div>
   )
 }
+
 function PromocionalesScreen({
   loading,
   promoRows,
@@ -3373,18 +3566,36 @@ function GastosScreen({
     setExpenseError(null)
 
     try {
-      const row = await createExpense({
+      const payload = {
         concept,
         pesos: parseOptionalNumber(expenseDraft.pesos),
         rate: parseOptionalNumber(expenseDraft.rate),
         usd,
         payer: expenseDraft.payer,
-        ...getCurrentExpenseDate(),
-      })
-      setExpenses((current) => [row, ...current])
+        month: expenseDraft.month,
+        year: expenseDraft.year,
+        kind: expenseDraft.kind,
+      }
+
+      if (expenseDraft.id) {
+        const row = await updateExpense(expenseDraft.id, payload)
+        setExpenses((current) => current.map((item) => (item.id === row.id ? row : item)))
+      } else {
+        const row = await createExpense(payload)
+        setExpenses((current) => [row, ...current])
+      }
       setExpenseDraft(null)
     } catch (error) {
-      setExpenseError(error instanceof Error ? error.message : 'No se pudo guardar el gasto.')
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'object' &&
+              error &&
+              'message' in error &&
+              typeof (error as { message: unknown }).message === 'string'
+            ? (error as { message: string }).message
+            : 'No se pudo guardar el gasto.'
+      setExpenseError(message || 'No se pudo guardar el gasto.')
     } finally {
       setSavingExpense(false)
     }
@@ -3428,8 +3639,17 @@ function GastosScreen({
           </div>
           <div className="list-group">
             {rows.map((item, index) => (
-              <div className={`expense-row ${index === rows.length - 1 ? 'last' : ''}`} key={item.id}>
-                <div>
+              <button
+                className={`expense-row ${index === rows.length - 1 ? 'last' : ''}`}
+                key={item.id}
+                onClick={() => {
+                  setExpenseError(null)
+                  setExpenseDraft(createExpenseDraftFromExpense(item))
+                }}
+                type="button"
+              >
+                {(item.kind ?? 'libros') === 'shows' ? <ShowKindIcon /> : null}
+                <div className="expense-row-main">
                   <strong>{item.concept}</strong>
                   <p>
                     {item.pesos === null
@@ -3441,7 +3661,7 @@ function GastosScreen({
                   <strong>{currencyUsdFormatter.format(item.usd)}</strong>
                   <PayerChip name={item.payer} />
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -3765,6 +3985,8 @@ function NewExpenseSheet({
   saving?: boolean
   setDraft: (draft: ExpenseDraft) => void
 }) {
+  const isEditing = Boolean(draft.id)
+
   function updatePesos(pesos: string) {
     const rate = parseOptionalNumber(draft.rate)
 
@@ -3804,29 +4026,125 @@ function NewExpenseSheet({
         <div className="grabber" />
         <div className="sheet-head">
           <div>
-            <h2>Nuevo gasto</h2>
-            <p>Cargá el concepto, monto y quién lo pagó.</p>
+            <h2>{isEditing ? 'Editar gasto' : 'Nuevo gasto'}</h2>
+            <p>
+              {isEditing
+                ? `${draft.month} ${draft.year}. Actualizá el concepto, monto o quién lo pagó.`
+                : 'Cargá el concepto, monto y quién lo pagó.'}
+            </p>
           </div>
           <button className="close-button" onClick={onClose} type="button">×</button>
         </div>
 
         <div className="new-sale-form">
-          <div className="edit-grid">
-            <input className="wide" placeholder="Concepto" value={draft.concept} onChange={(event) => setDraft({ ...draft, concept: event.target.value })} />
-            <input inputMode="decimal" placeholder="Pesos" value={draft.pesos} onChange={(event) => updatePesos(event.target.value)} />
-            <input inputMode="decimal" placeholder="Tipo de cambio" value={draft.rate} onChange={(event) => updateRate(event.target.value)} />
-            <input inputMode="decimal" placeholder="USD" value={draft.usd} onChange={(event) => updateUsd(event.target.value)} />
-            <select value={draft.payer} onChange={(event) => setDraft({ ...draft, payer: event.target.value })}>
-              <option value="Susan">Susan</option>
-              <option value="Delfi">Delfi</option>
-              <option value="Mechi">Mechi</option>
-            </select>
+          <div className="new-sale-stack">
+            <div className="new-sale-field">
+              <span className="new-sale-field-label" id="expense-concept-label">
+                Concepto
+              </span>
+              <input
+                aria-labelledby="expense-concept-label"
+                className="new-sale-input"
+                placeholder="Ej. Honorarios, imprenta…"
+                value={draft.concept}
+                onChange={(event) => setDraft({ ...draft, concept: event.target.value })}
+              />
+            </div>
+
+            <div className="new-sale-field">
+              <span className="new-sale-field-label">Tipo</span>
+              <Segmented<SaleKind>
+                active={draft.kind}
+                onChange={(kind) => setDraft({ ...draft, kind })}
+                options={[
+                  { key: 'libros', label: 'Libros' },
+                  { key: 'shows', label: 'Shows' },
+                ]}
+              />
+            </div>
+
+            <div className="expense-form-row">
+              <div className="new-sale-field">
+                <span className="new-sale-field-label" id="expense-pesos-label">
+                  Pesos
+                </span>
+                <div className="expense-amount-input expense-amount-input--ars">
+                  <span aria-hidden className="expense-amount-prefix">
+                    $
+                  </span>
+                  <input
+                    aria-labelledby="expense-pesos-label"
+                    className="new-sale-input"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={draft.pesos}
+                    onChange={(event) => updatePesos(event.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="new-sale-field">
+                <span className="new-sale-field-label" id="expense-rate-label">
+                  Tipo de cambio
+                </span>
+                <div className="expense-amount-input expense-amount-input--ars">
+                  <span aria-hidden className="expense-amount-prefix">
+                    $
+                  </span>
+                  <input
+                    aria-labelledby="expense-rate-label"
+                    className="new-sale-input"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={draft.rate}
+                    onChange={(event) => updateRate(event.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="expense-form-row">
+              <div className="new-sale-field">
+                <span className="new-sale-field-label" id="expense-usd-label">
+                  Dólares
+                </span>
+                <div className="expense-amount-input expense-amount-input--usd">
+                  <span aria-hidden className="expense-amount-prefix">
+                    US$
+                  </span>
+                  <input
+                    aria-labelledby="expense-usd-label"
+                    className="new-sale-input"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={draft.usd}
+                    onChange={(event) => updateUsd(event.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="new-sale-field">
+                <span className="new-sale-field-label" id="expense-payer-label">
+                  Quién pagó
+                </span>
+                <select
+                  aria-labelledby="expense-payer-label"
+                  className="new-sale-input"
+                  value={draft.payer}
+                  onChange={(event) => setDraft({ ...draft, payer: event.target.value })}
+                >
+                  <option value="Susan">Susan</option>
+                  <option value="Delfi">Delfi</option>
+                  <option value="Mechi">Mechi</option>
+                </select>
+              </div>
+            </div>
           </div>
           {error ? <p className="edit-error">{error}</p> : null}
           <div className="edit-actions">
             <button className="secondary-button" disabled={saving} onClick={onClose} type="button">Cancelar</button>
             <button className="primary-button green" disabled={saving} onClick={onSave} type="button">
-              {saving ? 'Guardando…' : 'Crear gasto'}
+              {saving ? 'Guardando…' : isEditing ? 'Guardar cambios' : 'Crear gasto'}
             </button>
           </div>
         </div>
@@ -4128,6 +4446,18 @@ function DeliveryIndicator({
   )
 }
 
+function ShowKindIcon() {
+  return (
+    <span aria-label="Show" className="show-kind-icon" role="img" title="Show">
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <circle cx="8.5" cy="17" r="2.6" />
+        <path d="M11.1 16.2V5.2" />
+        <path d="M11.1 5.2c2.2 1 4.4 1.8 6.4 2" />
+      </svg>
+    </span>
+  )
+}
+
 function PaymentMethodIcon({ method }: { method: Sale['paymentMethod'] }) {
   const label = ventasPaymentMethodLabel(method)
 
@@ -4323,8 +4653,10 @@ function isInvoicePending(sale: Sale): boolean {
   return (sale.invoiceStatus ?? 'pendiente') === 'pendiente'
 }
 
-/** Encargos: `payment_status = encargo` (sin entregar), o filas legacy sin entregar con cobro pendiente (misma lista que antes de migrar). */
+/** Encargos: `payment_status = encargo` (sin entregar), o filas legacy sin entregar con cobro pendiente (misma lista que antes de migrar). Shows nunca son encargos. */
 function isEncargoSale(sale: Sale): boolean {
+  if (sale.kind === 'shows') return false
+
   if (sale.paymentStatus === 'encargo') {
     return !isDelivered(sale)
   }
@@ -4443,18 +4775,14 @@ function salePaymentTierFromSale(sale: Sale): SalePaymentTier {
   if (sale.paymentStatus === 'cobrado') return 'pagado'
   if (sale.paymentStatus === 'parcial') return 'parcial'
   if (sale.paymentStatus === 'encargo') {
-    const q = sale.quantity ?? 0
-    const pu = sale.unitPriceArs ?? 0
-    const total = q * pu
+    const total = getSaleTotal(sale)
     if (sale.paidArs <= 0) return 'porPagar'
     if (total > 0 && sale.paidArs >= total) return 'pagado'
 
     return 'parcial'
   }
 
-  const q = sale.quantity ?? 0
-  const pu = sale.unitPriceArs ?? 0
-  const total = q * pu
+  const total = getSaleTotal(sale)
   if (sale.paidArs <= 0) return 'porPagar'
   if (total > 0 && sale.paidArs >= total) return 'pagado'
 
@@ -4462,6 +4790,12 @@ function salePaymentTierFromSale(sale: Sale): SalePaymentTier {
 }
 
 function saleLineTotalArsDraft(draft: SaleDraft): number | null {
+  if (draft.kind === 'shows') {
+    const p = parseOptionalNumber(draft.unitPriceArs)
+    if (p === null || p <= 0) return null
+    return p
+  }
+
   const q = parseOptionalNumber(draft.quantity)
   const p = parseOptionalNumber(draft.unitPriceArs)
   if (q === null || p === null || q <= 0 || p <= 0) return null
@@ -4488,7 +4822,10 @@ function draftResolveSalePayment(
       if (totalEncargo === null || totalEncargo <= 0) {
         return {
           ok: false,
-          error: 'Completá unidades y precio unitario para registrar un pago parcial.',
+          error:
+            draft.kind === 'shows'
+              ? 'Completá el precio del show para registrar un pago parcial.'
+              : 'Completá unidades y precio unitario para registrar un pago parcial.',
           field: 'saleLine',
         }
       }
@@ -4520,7 +4857,10 @@ function draftResolveSalePayment(
     if (total === null || total <= 0) {
       return {
         ok: false,
-        error: 'Completá unidades y precio unitario para registrar un pago parcial.',
+        error:
+          draft.kind === 'shows'
+            ? 'Completá el precio del show para registrar un pago parcial.'
+            : 'Completá unidades y precio unitario para registrar un pago parcial.',
         field: 'saleLine',
       }
     }
@@ -4544,7 +4884,10 @@ function draftResolveSalePayment(
   if (total === null || total <= 0) {
     return {
       ok: false,
-      error: 'Completá unidades y precio unitario para marcar como pagada.',
+      error:
+        draft.kind === 'shows'
+          ? 'Completá el precio del show para marcar como pagada.'
+          : 'Completá unidades y precio unitario para marcar como pagada.',
       field: 'saleLine',
     }
   }
@@ -4556,6 +4899,8 @@ function saleToDraft(sale: Sale): SaleDraft {
   const tier = salePaymentTierFromSale(sale)
 
   return {
+    kind: sale.kind ?? 'libros',
+    date: sale.date || todayIsoDate(),
     buyer: sale.buyer,
     seller: sale.seller ?? '',
     quantity: sale.quantity?.toString() ?? '',
@@ -4572,6 +4917,8 @@ function saleToDraft(sale: Sale): SaleDraft {
 
 function createEmptySaleDraft(): SaleDraft {
   return {
+    kind: 'libros',
+    date: todayIsoDate(),
     buyer: '',
     seller: 'Delfi',
     quantity: '',
@@ -4598,11 +4945,28 @@ function createEmptyPromoDraft(): PromoDraft {
 
 function createEmptyExpenseDraft(): ExpenseDraft {
   return {
+    id: null,
+    ...getCurrentExpenseDate(),
     concept: '',
     pesos: '',
     rate: '',
     usd: '',
     payer: 'Susan',
+    kind: 'libros',
+  }
+}
+
+function createExpenseDraftFromExpense(item: Expense): ExpenseDraft {
+  return {
+    id: item.id,
+    year: item.year,
+    month: item.month,
+    concept: item.concept,
+    pesos: item.pesos == null ? '' : formatDraftNumber(item.pesos),
+    rate: item.rate == null ? '' : formatDraftNumber(item.rate),
+    usd: formatDraftNumber(item.usd),
+    payer: item.payer,
+    kind: item.kind ?? 'libros',
   }
 }
 
@@ -4644,18 +5008,24 @@ function draftToSaleInput(
     throw new Error(resolved.error)
   }
 
+  const isShow = draft.kind === 'shows'
+  const unitPriceArs = parseOptionalNumber(draft.unitPriceArs)
+  const date = isValidIsoDate(draft.date) ? draft.date : todayIsoDate()
+
   return {
+    kind: isShow ? 'shows' : 'libros',
+    date,
     buyer: draft.buyer.trim(),
-    seller: emptyToNull(draft.seller),
-    quantity: parseOptionalNumber(draft.quantity),
-    unitPriceArs: parseOptionalNumber(draft.unitPriceArs),
+    seller: isShow ? null : emptyToNull(draft.seller),
+    quantity: isShow ? 1 : parseOptionalNumber(draft.quantity),
+    unitPriceArs,
     paidArs: resolved.paidArs,
     paymentMethod: draft.paymentMethod,
     transferDestination:
       draft.paymentMethod === 'transferencia' ? draft.transferDestination : null,
     paymentStatus: resolved.paymentStatus,
     invoiceStatus: draft.invoiceStatus,
-    delivered: emptyToNull(draft.delivered),
+    delivered: isShow ? null : emptyToNull(draft.delivered),
     billingNotes: emptyToNull(draft.billingNotes),
   }
 }
@@ -4695,6 +5065,14 @@ async function copyTextToClipboard(text: string) {
   } finally {
     document.body.removeChild(textArea)
   }
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function isValidIsoDate(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
 }
 
 function emptyToNull(value: string) {

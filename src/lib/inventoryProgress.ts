@@ -44,8 +44,12 @@ export function isSaleCobradoOrParcial(sale: Pick<Sale, 'paymentStatus'>): boole
   return sale.paymentStatus === 'cobrado' || sale.paymentStatus === 'parcial'
 }
 
-/** Ejemplares con `payment_status` cobrado o parcial (excluye pendiente y encargo). Alineado a StatCard «Vendidos». */
-export function paidCopiesForSale(sale: Pick<Sale, 'quantity' | 'paymentStatus'>): number {
+/** Ejemplares con `payment_status` cobrado o parcial (excluye pendiente, encargo y shows). */
+export function paidCopiesForSale(
+  sale: Pick<Sale, 'quantity' | 'paymentStatus' | 'kind'>,
+): number {
+  if (sale.kind === 'shows') return 0
+
   const qty = saleQuantityFloor(sale)
   if (qty <= 0) return 0
 
@@ -79,6 +83,7 @@ function isAcSellerForStock(seller: string | null | undefined): boolean {
 export function deliveredUnitsAttributedToSeller(sales: Sale[], sellerName: string): number {
   const target = sellerName.trim()
   return sales.reduce((sum, sale) => {
+    if (sale.kind === 'shows') return sum
     const saleSeller = sale.seller?.trim() ?? ''
     const matches =
       saleSeller === target ||
@@ -94,6 +99,7 @@ export function deliveredUnitsAttributedToSeller(sales: Sale[], sellerName: stri
 export function stockMovementUnitsForRow(sales: Sale[], rowName: string): number {
   if (rowName === AC_STOCK_NAME) {
     return sales.reduce((sum, sale) => {
+      if (sale.kind === 'shows') return sum
       if (!isAcSellerForStock(sale.seller)) return sum
       return sum + saleQuantityFloor(sale)
     }, 0)

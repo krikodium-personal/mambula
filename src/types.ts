@@ -35,6 +35,9 @@ export type AcSchemeSaleRecord = {
 /** Cuenta destino cuando el cobro fue por transferencia. */
 export type SaleTransferDestination = 'Delfi' | 'Mechi'
 
+/** Tipo de movimiento: libros (ejemplares) o show (monto libre sin inventario). */
+export type SaleKind = 'libros' | 'shows'
+
 export type Sale = {
   id: string
   date: string
@@ -52,6 +55,8 @@ export type Sale = {
   invoiceStatus?: 'facturado' | 'pendiente' | 'no_aplica'
   delivered?: string | null
   billingNotes?: string | null
+  /** Default `libros` para filas históricas. */
+  kind: SaleKind
 }
 
 export type SaleBreakdown = {
