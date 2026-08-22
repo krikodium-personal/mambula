@@ -3036,9 +3036,17 @@ button.stat-card.stat-card--clickable {
 .profit-card-breakdown {
   display: grid;
   gap: 8px;
-  grid-template-columns: 1fr 1fr 1fr;
   margin-top: 10px;
   padding-left: 44px;
+}
+
+.profit-card-breakdown--liquidaciones {
+  grid-template-columns: 1fr 1fr;
+}
+
+.profit-card-breakdown--saldo {
+  grid-template-columns: 1fr 1fr;
+  margin-top: 8px;
 }
 
 .profit-card-metric-label {
@@ -3055,6 +3063,14 @@ button.stat-card.stat-card--clickable {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   margin-top: 2px;
+}
+
+.profit-card-metric-value.is-negative {
+  color: var(--red);
+}
+
+.profit-card-metric-value.is-positive {
+  color: var(--green);
 }
 
 .profit-card-avatar {

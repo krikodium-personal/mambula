@@ -145,14 +145,14 @@ export function liquidacionVentasRevenueArs(
   return 0
 }
 
-/** Reparto Ventas Mambula: socias en partes iguales tras descontar Wonky fijo por ejemplar (alineado a StatCard Vendidos = payment_status cobrado|parcial). */
+/** Reparto Ventas Mambula (sin canal AC ni shows): total − $750 Wonky/ejemplar, resto ÷ 3. */
 export function computeVentasMambulaSplits(
-  /** Total ARS base del reparto (en liquidación: cobrados al total de línea + parciales según `paid_ars`). */
+  /** Total ARS base del reparto (cobrados al total de línea + parciales según `paid_ars`). */
   totalVentasArs: number,
-  /** Ejemplares vendidos registrados (misma suma que StatCard Vendidos: cobrado + parcial). */
+  /** Ejemplares cobrado|parcial de ese mismo pool. */
   ventasSoldQty: number,
 ): PartnerGainBreakdown[] {
-  const wonkyVentasArs = WONKY_ARS_PER_VENTA_COPY * ventasSoldQty
+  const wonkyVentasArs = WONKY_ARS_PER_VENTA_COPY * Math.max(0, ventasSoldQty)
   const sociasVentasPoolArs = Math.max(0, totalVentasArs - wonkyVentasArs)
   const sociasVentasEachArs = sociasVentasPoolArs / 3
 

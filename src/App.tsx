@@ -7,13 +7,8 @@ import {
 } from './lib/cuentasMedioMovements'
 import './App.css'
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import { isAcChannelSeller, totalAcChannelSaleQuantity } from './lib/acChannel'
 import {
-  totalAcChannelSaleGrossArs,
-  totalAcChannelSaleQuantity,
-} from './lib/acChannel'
-import {
-  computeAbrazandoGananciasFromPoolGross,
-  computeAbrInventorySplit,
   computeVentasMambulaSplits,
   estimateArsPerUsdFromExpenseRates,
   liquidacionVentasRevenueArs,
@@ -484,6 +479,7 @@ function App() {
       ventasTabSales.filter(
         (s) =>
           s.kind !== 'shows' &&
+          !isAcChannelSeller(s.seller) &&
           (s.paymentStatus === 'cobrado' || s.paymentStatus === 'parcial'),
       ),
     [ventasTabSales],
@@ -495,6 +491,12 @@ function App() {
     [ventasLiquidacionScopedSales],
   )
 
+  /** Ejemplares del mismo pool que `ventasLiquidacionScopedSales` (para restar $750 Wonky). */
+  const mambulaPaidSoldCopies = useMemo(
+    () => ventasLiquidacionScopedSales.reduce((sum, s) => sum + paidCopiesForSale(s), 0),
+    [ventasLiquidacionScopedSales],
+  )
+
   const encargoSales = useMemo(() => sales.filter(isEncargoSale), [sales])
   const ventasTabPaidArs = ventasTabSales.reduce((total, sale) => total + sale.paidArs, 0)
   const ventasTabPendingArs = useMemo(
@@ -502,23 +504,13 @@ function App() {
     [ventasTabSales],
   )
 
-  const abrSplit = useMemo(() => {
-    const copiesPerBox = projectConfig.firstPrintRun.copies / projectConfig.firstPrintRun.boxes
-    return computeAbrInventorySplit(stockAllocations, projectConfig.costRules, undefined, copiesPerBox)
-  }, [stockAllocations, projectConfig.costRules, projectConfig.firstPrintRun.boxes, projectConfig.firstPrintRun.copies])
-
   const acLiquidacionSoldQuantityRaw = useMemo(() => {
     return totalAcSchemeSoldQuantity(ventasData) + totalAcChannelSaleQuantity(sales)
   }, [ventasData, sales])
 
-  const acLiquidacionPoolGrossArs = useMemo(() => {
-    const fromScheme = ventasData.acSchemeSales.reduce((sum, row) => sum + row.amountArs, 0)
-    return fromScheme + totalAcChannelSaleGrossArs(sales, abrSplit.referenceUnitPriceArs)
-  }, [ventasData.acSchemeSales, sales, abrSplit.referenceUnitPriceArs])
-
   const partnerGainRows = useMemo(
-    () => computeVentasMambulaSplits(ventasLiquidacionTotalArs, paidSoldCopies),
-    [ventasLiquidacionTotalArs, paidSoldCopies],
+    () => computeVentasMambulaSplits(ventasLiquidacionTotalArs, mambulaPaidSoldCopies),
+    [ventasLiquidacionTotalArs, mambulaPaidSoldCopies],
   )
 
   async function saveWonkyEjemplaresSettlement(
@@ -984,7 +976,6 @@ function App() {
     <main className="ios-app">
       {tab === 'home' ? (
         <HomeScreen
-          acLiquidacionPoolGrossArs={acLiquidacionPoolGrossArs}
           acLiquidacionSoldQuantityRaw={acLiquidacionSoldQuantityRaw}
           copyMechiPaymentAlias={copyMechiPaymentAlias}
           copyPaymentAlias={copyPaymentAlias}
@@ -1282,7 +1273,6 @@ function CuentasMedioDetailSheet({
 }
 
 function HomeScreen({
-  acLiquidacionPoolGrossArs,
   acLiquidacionSoldQuantityRaw,
   copyMechiPaymentAlias,
   copyPaymentAlias,
@@ -1308,7 +1298,6 @@ function HomeScreen({
   stockAllocationError,
   stockAllocations,
 }: {
-  acLiquidacionPoolGrossArs: number
   acLiquidacionSoldQuantityRaw: number
   copyMechiPaymentAlias: () => void
   copyPaymentAlias: () => void
@@ -1383,23 +1372,6 @@ function HomeScreen({
     stockDraft,
   ])
   const inventoryError = localStockError ?? stockAllocationError
-  const acInventoryRow = inventoryTableRows.find((row) => row.name === AC_STOCK_NAME)
-  const acBoxesStr = editingInventory
-    ? stockDraft[AC_STOCK_NAME]?.boxes ?? ''
-    : String(acInventoryRow?.boxes ?? 0)
-  const acSchemeCapCopies = inventoryCopiesFromBoxes(acBoxesStr, copiesPerBox)
-  const acSchemeCap = Math.max(0, acSchemeCapCopies)
-  const effectiveAcSchemeUnits = Math.min(acLiquidacionSoldQuantityRaw, acSchemeCap)
-
-  const acSliderGains = useMemo(
-    () =>
-      computeAbrazandoGananciasFromPoolGross(
-        acLiquidacionPoolGrossArs,
-        effectiveAcSchemeUnits,
-        projectConfig.costRules,
-      ),
-    [acLiquidacionPoolGrossArs, effectiveAcSchemeUnits, projectConfig.costRules],
-  )
 
   const wonkySaldadoArs = useMemo(
     () => wonkyLiquidacionSaldadoArs(partnerSettlements),
@@ -1453,32 +1425,32 @@ function HomeScreen({
   }, [expenseFallbackArsPerUsd, expenses, sales])
 
   const sociasProfitRows = useMemo(() => {
-    const acEach = acSliderGains.gananciaPorSociaAcArs
-    /** Shows cobrados: se reparten en partes iguales (no según vendedora). */
-    const showIngresosPagadosArs = sales
-      .filter((sale) => sale.kind === 'shows' && sale.paymentStatus === 'cobrado')
-      .reduce((sum, sale) => sum + getSaleTotal(sale), 0)
-    const showIngresosEachArs = showIngresosPagadosArs / sociasProfitOrder.length
+    let librosNetArs = 0
+    let showsArs = 0
+    for (const sale of sales) {
+      const revenueArs = liquidacionVentasRevenueArs(sale)
+      if (sale.kind === 'shows') {
+        showsArs += revenueArs
+        continue
+      }
+      librosNetArs += revenueArs - WONKY_ARS_PER_VENTA_COPY * paidCopiesForSale(sale)
+    }
+    const ingresosEachArs = (librosNetArs + showsArs) / sociasProfitOrder.length
 
     return sociasProfitOrder.map((partner) => {
-      const ventasRow = partnerGainRows.find((row) => row.partner === partner)
-      const gananciaMambulaArs = (ventasRow?.totalGainArs ?? 0) + showIngresosEachArs
       const gastosArs = sumExpensesArsForPayer(expenses, partner, expenseFallbackArsPerUsd, 'all')
+      const saldadoArs = partnerSettlements
+        .filter((entry) => entry.partner === partner)
+        .reduce((sum, entry) => sum + entry.amountArs, 0)
 
       return {
         partner,
-        gananciaAcArs: acEach,
-        gananciaMambulaArs,
+        ingresosArs: ingresosEachArs,
         gastosArs,
+        saldadoArs,
       }
     })
-  }, [
-    acSliderGains.gananciaPorSociaAcArs,
-    expenseFallbackArsPerUsd,
-    expenses,
-    partnerGainRows,
-    sales,
-  ])
+  }, [expenseFallbackArsPerUsd, expenses, partnerSettlements, sales])
 
   const cuentasMedioGross = useMemo(() => computeCuentasMedioGrossFromSales(sales), [sales])
 
@@ -1909,9 +1881,9 @@ function HomeScreen({
         <ProfitCard
           socias={sociasProfitRows.map((row) => ({
             nombre: row.partner,
-            liqAC: row.gananciaAcArs,
-            liqMambula: row.gananciaMambulaArs,
+            ingresos: row.ingresosArs,
             gastos: row.gastosArs,
+            saldado: row.saldadoArs,
           }))}
         />
 
