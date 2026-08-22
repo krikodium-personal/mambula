@@ -7,9 +7,8 @@ import {
 } from './lib/cuentasMedioMovements'
 import './App.css'
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
-import { isAcChannelSeller, totalAcChannelSaleQuantity } from './lib/acChannel'
+import { totalAcChannelSaleQuantity } from './lib/acChannel'
 import {
-  computeVentasMambulaSplits,
   estimateArsPerUsdFromExpenseRates,
   liquidacionVentasRevenueArs,
   AC_STOCK_NAME,
@@ -83,7 +82,6 @@ import {
   type VentasData,
 } from './lib/ventasRepository'
 import type {
-  PartnerGainBreakdown,
   PartnerSettlement,
   Sale,
   SaleKind,
@@ -474,29 +472,6 @@ function App() {
 
   const ventasTabSales = useMemo(() => sales.filter((sale) => !isEncargoSale(sale)), [sales])
 
-  const ventasLiquidacionScopedSales = useMemo(
-    () =>
-      ventasTabSales.filter(
-        (s) =>
-          s.kind !== 'shows' &&
-          !isAcChannelSeller(s.seller) &&
-          (s.paymentStatus === 'cobrado' || s.paymentStatus === 'parcial'),
-      ),
-    [ventasTabSales],
-  )
-
-  const ventasLiquidacionTotalArs = useMemo(
-    () =>
-      ventasLiquidacionScopedSales.reduce((sum, s) => sum + liquidacionVentasRevenueArs(s), 0),
-    [ventasLiquidacionScopedSales],
-  )
-
-  /** Ejemplares del mismo pool que `ventasLiquidacionScopedSales` (para restar $750 Wonky). */
-  const mambulaPaidSoldCopies = useMemo(
-    () => ventasLiquidacionScopedSales.reduce((sum, s) => sum + paidCopiesForSale(s), 0),
-    [ventasLiquidacionScopedSales],
-  )
-
   const encargoSales = useMemo(() => sales.filter(isEncargoSale), [sales])
   const ventasTabPaidArs = ventasTabSales.reduce((total, sale) => total + sale.paidArs, 0)
   const ventasTabPendingArs = useMemo(
@@ -507,11 +482,6 @@ function App() {
   const acLiquidacionSoldQuantityRaw = useMemo(() => {
     return totalAcSchemeSoldQuantity(ventasData) + totalAcChannelSaleQuantity(sales)
   }, [ventasData, sales])
-
-  const partnerGainRows = useMemo(
-    () => computeVentasMambulaSplits(ventasLiquidacionTotalArs, mambulaPaidSoldCopies),
-    [ventasLiquidacionTotalArs, mambulaPaidSoldCopies],
-  )
 
   async function saveWonkyEjemplaresSettlement(
     input: {
@@ -993,7 +963,6 @@ function App() {
             const settlements = await loadPartnerSettlements()
             setPartnerSettlements(settlements)
           }}
-          partnerGainRows={partnerGainRows}
           partnerSettlements={partnerSettlements}
           onWonkyEjemplaresSettlement={saveWonkyEjemplaresSettlement}
           projectConfig={projectConfig}
@@ -1285,7 +1254,6 @@ function HomeScreen({
   onCuentasSettlementApplied,
   onOpenSaleFromCuentas,
   onWonkyEjemplaresSettlement,
-  partnerGainRows,
   partnerSettlements,
   paidSoldCopies,
   salesPaidArsTotal,
@@ -1318,7 +1286,6 @@ function HomeScreen({
     },
     balancesBefore: CuentasMedioBalances,
   ) => Promise<void>
-  partnerGainRows: PartnerGainBreakdown[]
   partnerSettlements: PartnerSettlement[]
   /** Ejemplares con `payment_status` cobrado o parcial (todas las ventas); StatCard Vendidos. */
   paidSoldCopies: number
