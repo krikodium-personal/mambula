@@ -41,6 +41,8 @@ export type SaleKind = 'libros' | 'shows'
 export type Sale = {
   id: string
   date: string
+  /** Alta en BD (`created_at`); desempate cuando varias ventas caen el mismo día. */
+  createdAt?: string
   buyer: string
   seller: string | null
   quantity: number | null

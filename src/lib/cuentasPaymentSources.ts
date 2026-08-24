@@ -1,4 +1,5 @@
 import {
+  clampCuentasBalances,
   cloneCuentasBalances,
   CUENTAS_BANK_ACCOUNTS,
   CUENTAS_SOCIAS,
@@ -72,10 +73,10 @@ export function applyPaymentSourceDebit(
   const amount = roundArs(amountArs)
 
   if (source.kind === 'efectivo') {
-    next.efectivo[source.socia] = roundArs(next.efectivo[source.socia] - amount)
+    next.efectivo[source.socia] = roundArs(Math.max(0, next.efectivo[source.socia] - amount))
   } else {
-    next.banco[source.account] = roundArs(next.banco[source.account] - amount)
+    next.banco[source.account] = roundArs(Math.max(0, next.banco[source.account] - amount))
   }
 
-  return next
+  return clampCuentasBalances(next)
 }

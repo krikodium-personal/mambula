@@ -48,6 +48,7 @@ type SaleRow = {
   delivered: string | null
   billing_notes: string | null
   sale_kind?: string | null
+  created_at?: string | null
   /** Orden de fila en Excel; null = alta manual (va al final). */
   sheet_position: number | null
 }
@@ -617,5 +618,6 @@ function mapSale(row: SaleRow): Sale {
     delivered: row.delivered,
     billingNotes: row.billing_notes,
     kind: normalizeSaleKind(row.sale_kind),
+    createdAt: row.created_at ?? undefined,
   }
 }

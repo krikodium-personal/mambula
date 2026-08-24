@@ -28,10 +28,10 @@ function emptyDraft(): Record<CuentasSocia, string> {
 
 function questionPrompt(q: CuentasSettlementQuestion): string {
   if (q.kind === 'own_bank_shortfall') {
-    return `Los fondos de ${q.partner} no alcanzan para cubrir el monto completo. ¿Querés cubrir la diferencia con dinero de otra cuenta?`
+    return `El efectivo y la cuenta de ${q.partner} no alcanzan. ¿Usamos dinero que ya está en otra cuenta o en efectivo de otra socia? Si no hay fondos reales, hay que bajar el monto.`
   }
 
-  return `Los fondos disponibles no alcanzan para cubrir el monto completo de ${q.partner}. ¿Querés saldar solo lo que hay disponible?`
+  return `No hay plata suficiente para cubrir el monto completo de ${q.partner}. ¿Saldamos solo lo que hay ahora? No se puede dejar ninguna cuenta en negativo.`
 }
 
 export default function CuentasMedioSettlementModal({
@@ -161,7 +161,8 @@ export default function CuentasMedioSettlementModal({
           {step === 'input' ? (
             <>
               <p className="card-note">
-                Monto en ARS por socia. Dejá en blanco o $0 si no saldás a esa persona en esta operación.
+                Solo se usa dinero que ya está en efectivo o en las cuentas. Si no alcanza, se avisa:
+                no se toma a crédito ni se deja un saldo negativo.
               </p>
               {CUENTAS_SOCIAS.map((partner) => (
                 <div className="new-sale-field" key={partner}>

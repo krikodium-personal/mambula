@@ -1,9 +1,14 @@
 import type { CuentasPartnerSettlementLine, CuentasSettlementComputeResult } from './cuentasSettlementEngine'
-import type { CuentasMedioBalances } from './cuentasMedioBalances'
+import {
+  applyPaidSaleToCuentasBalances,
+  clampCuentasBalances,
+  cloneCuentasBalances,
+  type CuentasMedioBalances,
+} from './cuentasMedioBalances'
 import { applyPaymentSourceDebit, type CuentasPaymentSource } from './cuentasPaymentSources'
 import { createPartnerSettlement } from './partnerSettlementsRepository'
 import { supabase } from './supabase'
-import type { SplitPartnerKey } from '../types'
+import type { Sale, SplitPartnerKey } from '../types'
 
 export type WonkyCuentasPayment = {
   copies: number
@@ -74,7 +79,7 @@ export async function persistCuentasSettlement(
 ): Promise<CuentasSettlementOperation> {
   const payload: CuentasSettlementOperationPayload = {
     partners: result.lines.filter((l) => l.settledArs > 0),
-    balancesAfter: result.balancesAfter,
+    balancesAfter: clampCuentasBalances(result.balancesAfter),
   }
 
   if (!supabase) {
@@ -164,17 +169,32 @@ export async function persistWonkyCuentasSettlement(
   }
 }
 
-/** Replay operaciones sobre saldos brutos para obtener saldos actuales en la card. */
+function debitBucket(current: number, amount: number): number {
+  return Math.max(0, current - Math.max(0, amount))
+}
+
+/** Saldos actuales: último snapshot de liquidación (nunca negativo) + ventas posteriores. */
 export function applyCuentasOperationsToBalances(
   gross: CuentasMedioBalances,
   operations: CuentasSettlementOperation[],
+  sales: Sale[] = [],
 ): CuentasMedioBalances {
-  const balances = {
-    efectivo: { ...gross.efectivo },
-    banco: { ...gross.banco },
+  const chronological = [...operations].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const last = [...chronological].reverse().find((op) => op.payload?.balancesAfter)
+
+  if (last?.payload.balancesAfter) {
+    const balances = clampCuentasBalances(cloneCuentasBalances(last.payload.balancesAfter))
+
+    for (const sale of sales) {
+      if (sale.createdAt && sale.createdAt > last.createdAt) {
+        applyPaidSaleToCuentasBalances(balances, sale)
+      }
+    }
+
+    return clampCuentasBalances(balances)
   }
 
-  const chronological = [...operations].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const balances = cloneCuentasBalances(gross)
 
   for (const op of chronological) {
     if (op.payload.wonkyPayment) {
@@ -185,25 +205,21 @@ export function applyCuentasOperationsToBalances(
     }
 
     for (const line of op.payload.partners) {
-      balances.efectivo[line.partner] -= line.fromEfectivoArs
+      balances.efectivo[line.partner] = debitBucket(balances.efectivo[line.partner], line.fromEfectivoArs)
       if (line.fromOwnBankArs > 0) {
-        balances.banco[line.partner as keyof typeof balances.banco] -= line.fromOwnBankArs
+        const key = line.partner as keyof typeof balances.banco
+        if (key in balances.banco) {
+          balances.banco[key] = debitBucket(balances.banco[key], line.fromOwnBankArs)
+        }
       }
       for (const debit of line.fromPool) {
-        balances.banco[debit.account] -= debit.amountArs
+        balances.banco[debit.account] = debitBucket(balances.banco[debit.account], debit.amountArs)
       }
       for (const debit of line.fromEfectivoPool ?? []) {
-        balances.efectivo[debit.socia] -= debit.amountArs
+        balances.efectivo[debit.socia] = debitBucket(balances.efectivo[debit.socia], debit.amountArs)
       }
     }
   }
 
-  for (const partner of Object.keys(balances.efectivo) as (keyof typeof balances.efectivo)[]) {
-    balances.efectivo[partner] = Math.max(0, Math.round(balances.efectivo[partner]))
-  }
-  for (const account of Object.keys(balances.banco) as (keyof typeof balances.banco)[]) {
-    balances.banco[account] = Math.max(0, Math.round(balances.banco[account]))
-  }
-
-  return balances
+  return clampCuentasBalances(balances)
 }

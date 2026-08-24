@@ -1,6 +1,7 @@
 import { parseArsDraftAmount } from './arsInputFormat'
 import {
   cloneCuentasBalances,
+  clampCuentasBalances,
   CUENTAS_BANK_ACCOUNTS,
   CUENTAS_SOCIAS,
   SOCIAS_WITH_OWN_BANK,
@@ -140,17 +141,20 @@ function emptySettlementLine(partner: CuentasSocia, requestedArs: number): Cuent
 }
 
 function applyLineToBalances(balances: CuentasMedioBalances, line: CuentasPartnerSettlementLine) {
-  balances.efectivo[line.partner] = roundArs(balances.efectivo[line.partner] - line.fromEfectivoArs)
+  balances.efectivo[line.partner] = roundArs(
+    Math.max(0, balances.efectivo[line.partner] - line.fromEfectivoArs),
+  )
   if (line.fromOwnBankArs > 0) {
-    balances.banco[line.partner as CuentasBankAccount] = roundArs(
-      balances.banco[line.partner as CuentasBankAccount] - line.fromOwnBankArs,
-    )
+    const key = line.partner as CuentasBankAccount
+    balances.banco[key] = roundArs(Math.max(0, balances.banco[key] - line.fromOwnBankArs))
   }
   for (const debit of line.fromPool) {
-    balances.banco[debit.account] = roundArs(balances.banco[debit.account] - debit.amountArs)
+    balances.banco[debit.account] = roundArs(Math.max(0, balances.banco[debit.account] - debit.amountArs))
   }
   for (const debit of line.fromEfectivoPool) {
-    balances.efectivo[debit.socia] = roundArs(balances.efectivo[debit.socia] - debit.amountArs)
+    balances.efectivo[debit.socia] = roundArs(
+      Math.max(0, balances.efectivo[debit.socia] - debit.amountArs),
+    )
   }
 }
 
@@ -302,7 +306,7 @@ export function computeCuentasSettlement(
 
     if (!outcome.ok) {
       questions.push(outcome.question)
-      return { lines, balancesAfter: balances, questions }
+      return { lines, balancesAfter: clampCuentasBalances(balances), questions }
     }
 
     if (outcome.line.settledArs > 0) {
@@ -310,7 +314,7 @@ export function computeCuentasSettlement(
     }
   }
 
-  return { lines, balancesAfter: balances, questions: [] }
+  return { lines, balancesAfter: clampCuentasBalances(balances), questions: [] }
 }
 
 export function parseRequestedAmounts(draft: Record<CuentasSocia, string>): Record<CuentasSocia, number> {

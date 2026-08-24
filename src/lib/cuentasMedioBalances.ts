@@ -45,14 +45,12 @@ export function computeCuentasMedioGrossFromSales(sales: Sale[]): CuentasMedioGr
   for (const sale of sales) {
     if (sale.paymentStatus !== 'cobrado') continue
 
-    if (sale.paymentMethod === 'efectivo') {
-      const socia = efectivoHolderForSeller(sale.seller)
-      if (socia) balances.efectivo[socia] += sale.paidArs
-    } else if (sale.paymentMethod === 'transferencia') {
-      if (sale.transferDestination === 'Delfi') balances.banco.Delfi += sale.paidArs
-      else if (sale.transferDestination === 'Mechi') balances.banco.Mechi += sale.paidArs
-      else transferenciaSinDefinir += sale.paidArs
+    if (sale.paymentMethod === 'transferencia' && sale.transferDestination !== 'Delfi' && sale.transferDestination !== 'Mechi') {
+      transferenciaSinDefinir += sale.paidArs
+      continue
     }
+
+    applyPaidSaleToCuentasBalances(balances, sale)
   }
 
   return { ...balances, transferenciaSinDefinir }
@@ -62,5 +60,38 @@ export function cloneCuentasBalances(b: CuentasMedioBalances): CuentasMedioBalan
   return {
     efectivo: { ...b.efectivo },
     banco: { ...b.banco },
+  }
+}
+
+export function clampCuentasBalances(b: CuentasMedioBalances): CuentasMedioBalances {
+  return {
+    efectivo: {
+      Delfi: Math.max(0, Math.round(b.efectivo.Delfi)),
+      Mechi: Math.max(0, Math.round(b.efectivo.Mechi)),
+      Susan: Math.max(0, Math.round(b.efectivo.Susan)),
+    },
+    banco: {
+      Delfi: Math.max(0, Math.round(b.banco.Delfi)),
+      Mechi: Math.max(0, Math.round(b.banco.Mechi)),
+    },
+  }
+}
+
+/** Suma una venta cobrada a los saldos (efectivo o banco). No crea negativos. */
+export function applyPaidSaleToCuentasBalances(balances: CuentasMedioBalances, sale: Sale): void {
+  if (sale.paymentStatus !== 'cobrado') return
+
+  const paid = Math.max(0, sale.paidArs)
+  if (paid <= 0) return
+
+  if (sale.paymentMethod === 'efectivo') {
+    const socia = efectivoHolderForSeller(sale.seller)
+    if (socia) balances.efectivo[socia] += paid
+    return
+  }
+
+  if (sale.paymentMethod === 'transferencia') {
+    if (sale.transferDestination === 'Delfi') balances.banco.Delfi += paid
+    else if (sale.transferDestination === 'Mechi') balances.banco.Mechi += paid
   }
 }

@@ -91,7 +91,13 @@ import type {
 } from './types'
 
 function compareSaleDateDesc(a: Sale, b: Sale): number {
-  return String(b.date).localeCompare(String(a.date))
+  const byDate = String(b.date).localeCompare(String(a.date))
+  if (byDate !== 0) return byDate
+
+  const byCreated = String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))
+  if (byCreated !== 0) return byCreated
+
+  return b.id.localeCompare(a.id)
 }
 
 /** Alias Mercado Pago para cobros a nombre de Mechi (distinto del alias principal en proyecto). */
@@ -1426,8 +1432,9 @@ function HomeScreen({
       applyCuentasOperationsToBalances(
         { efectivo: cuentasMedioGross.efectivo, banco: cuentasMedioGross.banco },
         cuentasOperations,
+        sales,
       ),
-    [cuentasMedioGross, cuentasOperations],
+    [cuentasMedioGross, cuentasOperations, sales],
   )
 
   /** Ventas cobradas por bucket (para detalle al tocar una fila). */
