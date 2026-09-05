@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { CuentasMedioBalances } from '../lib/cuentasMedioBalances'
 import {
-  listCuentasSourcesCoveringAmount,
-  type CuentasPaymentSource,
+  allocateAcrossSources,
+  defaultSourceSelectionForAmount,
+  listCuentasSourcesWithFunds,
+  type CuentasPaymentAllocation,
 } from '../lib/cuentasPaymentSources'
 
 type WonkyEjemplaresSettlementModalProps = {
@@ -16,7 +18,7 @@ type WonkyEjemplaresSettlementModalProps = {
     copies: number
     settledOn: string
     amountArs: number
-    source: CuentasPaymentSource
+    sources: CuentasPaymentAllocation[]
   }) => Promise<void>
 }
 
@@ -39,39 +41,63 @@ export default function WonkyEjemplaresSettlementModal({
 }: WonkyEjemplaresSettlementModalProps) {
   const [copiesDraft, setCopiesDraft] = useState('')
   const [settledOn, setSettledOn] = useState(() => new Date().toISOString().slice(0, 10))
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
+  /** `null` = todavía no eligió a mano, se usa la selección automática. */
+  const [pickedIds, setPickedIds] = useState<string[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   const copies = parseCopiesInput(copiesDraft)
   const previewArs = copies !== null ? copies * arsPerEjemplar : null
 
-  const sourceOptions = useMemo(
-    () => (previewArs !== null ? listCuentasSourcesCoveringAmount(cuentasBalances, previewArs) : []),
-    [cuentasBalances, previewArs],
+  const sourceOptions = useMemo(() => listCuentasSourcesWithFunds(cuentasBalances), [cuentasBalances])
+
+  const selectedIds = useMemo(
+    () =>
+      pickedIds ??
+      (previewArs !== null && previewArs > 0
+        ? defaultSourceSelectionForAmount(cuentasBalances, previewArs)
+        : []),
+    [cuentasBalances, pickedIds, previewArs],
   )
 
-  useEffect(() => {
-    if (sourceOptions.length === 0) {
-      setSelectedSourceId(null)
-      return
+  const { allocations, remainingArs } = useMemo(() => {
+    if (previewArs === null || previewArs <= 0) {
+      return { allocations: [] as CuentasPaymentAllocation[], remainingArs: 0 }
     }
-    setSelectedSourceId((current) =>
-      current && sourceOptions.some((o) => o.id === current) ? current : sourceOptions[0]!.id,
-    )
-  }, [sourceOptions])
+    return allocateAcrossSources(cuentasBalances, selectedIds, previewArs)
+  }, [cuentasBalances, selectedIds, previewArs])
 
-  const selectedSource = sourceOptions.find((o) => o.id === selectedSourceId)?.source ?? null
+  const allocatedByOptionId = useMemo(() => {
+    const map = new Map<string, number>()
+    allocations.forEach((allocation) => {
+      const id =
+        allocation.source.kind === 'efectivo'
+          ? `efectivo:${allocation.source.socia}`
+          : `transferencia:${allocation.source.account}`
+      map.set(id, allocation.amountArs)
+    })
+    return map
+  }, [allocations])
+
+  const totalDisponibleArs = sourceOptions.reduce((sum, option) => sum + option.availableArs, 0)
+  const alcanzaEnTotal = previewArs !== null && totalDisponibleArs >= previewArs
+
+  function toggleSource(id: string) {
+    setPickedIds((current) => {
+      const base = current ?? selectedIds
+      return base.includes(id) ? base.filter((x) => x !== id) : [...base, id]
+    })
+  }
 
   const canSubmit = useMemo(() => {
     if (copies === null || copies <= 0) return false
     if (copies > ejemplaresPendientes) return false
     if (!settledOn) return false
     if (previewArs === null || previewArs <= 0) return false
-    if (sourceOptions.length === 0) return false
-    if (!selectedSource) return false
+    if (allocations.length === 0) return false
+    if (remainingArs > 0) return false
     return true
-  }, [copies, ejemplaresPendientes, settledOn, previewArs, sourceOptions.length, selectedSource])
+  }, [copies, ejemplaresPendientes, settledOn, previewArs, allocations.length, remainingArs])
 
   async function handleSubmit() {
     if (copies === null || copies <= 0) {
@@ -86,8 +112,12 @@ export default function WonkyEjemplaresSettlementModal({
       setError('Elegí una fecha.')
       return
     }
-    if (!selectedSource || previewArs === null) {
-      setError('Elegí de qué cuenta sale el pago.')
+    if (previewArs === null || allocations.length === 0) {
+      setError('Elegí de qué cuentas sale el pago.')
+      return
+    }
+    if (remainingArs > 0) {
+      setError(`Faltan ${formatArs(remainingArs)} para cubrir el pago. Sumá otra cuenta.`)
       return
     }
 
@@ -98,7 +128,7 @@ export default function WonkyEjemplaresSettlementModal({
         copies,
         settledOn,
         amountArs: previewArs,
-        source: selectedSource,
+        sources: allocations,
       })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo registrar el saldo.')
@@ -133,7 +163,10 @@ export default function WonkyEjemplaresSettlementModal({
               inputMode="numeric"
               placeholder="0"
               value={copiesDraft}
-              onChange={(e) => setCopiesDraft(e.target.value.replace(/[^\d]/g, ''))}
+              onChange={(e) => {
+                setCopiesDraft(e.target.value.replace(/[^\d]/g, ''))
+                setPickedIds(null)
+              }}
             />
           </div>
 
@@ -152,32 +185,45 @@ export default function WonkyEjemplaresSettlementModal({
             <div className="new-sale-field">
               <span className="new-sale-field-label">Pagar desde</span>
               {sourceOptions.length === 0 ? (
-                <p className="edit-error">
-                  Ninguna cuenta de efectivo o transferencia tiene saldo suficiente para cubrir{' '}
-                  {formatArs(previewArs)}.
-                </p>
+                <p className="edit-error">Ninguna cuenta tiene saldo disponible.</p>
               ) : (
-                <ul className="wonky-settle-source-list">
-                  {sourceOptions.map((option) => (
-                    <li key={option.id}>
-                      <label className="wonky-settle-source-option">
-                        <input
-                          checked={selectedSourceId === option.id}
-                          name="wonky-payment-source"
-                          type="radio"
-                          value={option.id}
-                          onChange={() => setSelectedSourceId(option.id)}
-                        />
-                        <span className="wonky-settle-source-option-body">
-                          <span className="wonky-settle-source-option-label">{option.label}</span>
-                          <span className="wonky-settle-source-option-meta">
-                            Disponible {formatArs(option.availableArs)}
-                          </span>
-                        </span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <p className="cuentas-settle-available-hint">
+                    Podés combinar varias cuentas. Se descuenta primero de las de menor saldo.
+                  </p>
+                  <ul className="wonky-settle-source-list">
+                    {sourceOptions.map((option) => {
+                      const checked = selectedIds.includes(option.id)
+                      const aportaArs = allocatedByOptionId.get(option.id) ?? 0
+
+                      return (
+                        <li key={option.id}>
+                          <label className="wonky-settle-source-option">
+                            <input
+                              checked={checked}
+                              type="checkbox"
+                              onChange={() => toggleSource(option.id)}
+                            />
+                            <span className="wonky-settle-source-option-body">
+                              <span className="wonky-settle-source-option-label">{option.label}</span>
+                              <span className="wonky-settle-source-option-meta">
+                                Disponible {formatArs(option.availableArs)}
+                                {aportaArs > 0 ? ` · aporta ${formatArs(aportaArs)}` : ''}
+                              </span>
+                            </span>
+                          </label>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                  {remainingArs > 0 ? (
+                    <p className="edit-error">
+                      {alcanzaEnTotal
+                        ? `Faltan ${formatArs(remainingArs)}. Sumá otra cuenta.`
+                        : `Faltan ${formatArs(remainingArs)}. Entre todas las cuentas hay ${formatArs(totalDisponibleArs)}, no alcanza para cubrir el pago.`}
+                    </p>
+                  ) : null}
+                </>
               )}
             </div>
           ) : null}

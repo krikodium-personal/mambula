@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { CuentasMedioBalances } from '../lib/cuentasMedioBalances'
-import type { CuentasPaymentSource } from '../lib/cuentasPaymentSources'
+import type { CuentasPaymentAllocation } from '../lib/cuentasPaymentSources'
 import type { CuentasSettlementOperation } from '../lib/cuentasSettlementsRepository'
 import type { PartnerSettlement } from '../types'
 import WonkyEjemplaresSettlementModal from './WonkyEjemplaresSettlementModal'
@@ -21,7 +21,7 @@ type LiquidacionesVentasCardProps = {
     copies: number
     settledOn: string
     amountArs: number
-    source: CuentasPaymentSource
+    sources: CuentasPaymentAllocation[]
   }) => Promise<void>
 }
 

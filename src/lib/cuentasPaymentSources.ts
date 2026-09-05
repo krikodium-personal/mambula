@@ -19,6 +19,12 @@ export type CuentasSourceOption = {
   availableArs: number
 }
 
+/** Una parte del pago y de qué cuenta sale. Un pago puede repartirse entre varias. */
+export type CuentasPaymentAllocation = {
+  source: CuentasPaymentSource
+  amountArs: number
+}
+
 /** Redondea un importe a cobrar/pagar: nunca negativo. */
 function roundArs(n: number) {
   return Math.max(0, Math.round(n * 100) / 100)
@@ -32,6 +38,97 @@ function roundBalance(n: number) {
 export function formatCuentasPaymentSourceLabel(source: CuentasPaymentSource): string {
   if (source.kind === 'efectivo') return `Efectivo · ${source.socia}`
   return `Transferencia · ${source.account}`
+}
+
+export function cuentasSourceId(source: CuentasPaymentSource): string {
+  return source.kind === 'efectivo' ? `efectivo:${source.socia}` : `transferencia:${source.account}`
+}
+
+/** Todas las cuentas con plata, de menor a mayor saldo. */
+export function listCuentasSourcesWithFunds(balances: CuentasMedioBalances): CuentasSourceOption[] {
+  const options: CuentasSourceOption[] = []
+
+  for (const socia of CUENTAS_SOCIAS) {
+    const source: CuentasPaymentSource = { kind: 'efectivo', socia }
+    const availableArs = balances.efectivo[socia]
+    if (availableArs > 0) {
+      options.push({
+        id: cuentasSourceId(source),
+        source,
+        label: formatCuentasPaymentSourceLabel(source),
+        availableArs,
+      })
+    }
+  }
+
+  for (const account of CUENTAS_BANK_ACCOUNTS) {
+    const source: CuentasPaymentSource = { kind: 'transferencia', account }
+    const availableArs = balances.banco[account]
+    if (availableArs > 0) {
+      options.push({
+        id: cuentasSourceId(source),
+        source,
+        label: formatCuentasPaymentSourceLabel(source),
+        availableArs,
+      })
+    }
+  }
+
+  return options.sort((a, b) => a.availableArs - b.availableArs)
+}
+
+/**
+ * Reparte `amountArs` entre las cuentas elegidas, vaciando primero las de menor saldo
+ * (mismo criterio que el reparto entre socias). `remainingArs > 0` significa que entre
+ * todas las elegidas no alcanzan a cubrir el total.
+ */
+export function allocateAcrossSources(
+  balances: CuentasMedioBalances,
+  selectedIds: readonly string[],
+  amountArs: number,
+): { allocations: CuentasPaymentAllocation[]; remainingArs: number } {
+  let left = roundArs(amountArs)
+  const allocations: CuentasPaymentAllocation[] = []
+  const selected = new Set(selectedIds)
+
+  for (const option of listCuentasSourcesWithFunds(balances)) {
+    if (left <= 0) break
+    if (!selected.has(option.id)) continue
+
+    const take = Math.min(option.availableArs, left)
+    if (take <= 0) continue
+
+    allocations.push({ source: option.source, amountArs: take })
+    left = roundArs(left - take)
+  }
+
+  return { allocations, remainingArs: left }
+}
+
+/**
+ * Selección por defecto: la cuenta más chica que cubra todo el monto ella sola. Si ninguna
+ * alcanza, se van sumando cuentas de menor a mayor hasta llegar al total.
+ */
+export function defaultSourceSelectionForAmount(
+  balances: CuentasMedioBalances,
+  amountArs: number,
+): string[] {
+  const amount = roundArs(amountArs)
+  if (amount <= 0) return []
+
+  const options = listCuentasSourcesWithFunds(balances)
+  const single = options.find((option) => option.availableArs >= amount)
+  if (single) return [single.id]
+
+  const selected: string[] = []
+  let left = amount
+  for (const option of options) {
+    if (left <= 0) break
+    selected.push(option.id)
+    left = roundArs(left - option.availableArs)
+  }
+
+  return selected
 }
 
 export function listCuentasSourcesCoveringAmount(
@@ -68,6 +165,16 @@ export function listCuentasSourcesCoveringAmount(
   }
 
   return options.sort((a, b) => a.availableArs - b.availableArs)
+}
+
+export function applyPaymentSourceDebits(
+  balances: CuentasMedioBalances,
+  allocations: readonly CuentasPaymentAllocation[],
+): CuentasMedioBalances {
+  return allocations.reduce(
+    (acc, allocation) => applyPaymentSourceDebit(acc, allocation.source, allocation.amountArs),
+    cloneCuentasBalances(balances),
+  )
 }
 
 export function applyPaymentSourceDebit(

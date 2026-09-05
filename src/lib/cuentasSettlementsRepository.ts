@@ -4,7 +4,11 @@ import {
   roundCuentasBalances,
   type CuentasMedioBalances,
 } from './cuentasMedioBalances'
-import { applyPaymentSourceDebit, type CuentasPaymentSource } from './cuentasPaymentSources'
+import {
+  applyPaymentSourceDebits,
+  type CuentasPaymentAllocation,
+  type CuentasPaymentSource,
+} from './cuentasPaymentSources'
 import { createPartnerSettlement } from './partnerSettlementsRepository'
 import { supabase } from './supabase'
 import type { SplitPartnerKey } from '../types'
@@ -12,7 +16,20 @@ import type { SplitPartnerKey } from '../types'
 export type WonkyCuentasPayment = {
   copies: number
   amountArs: number
-  source: CuentasPaymentSource
+  /** Un pago puede repartirse entre varias cuentas. */
+  sources?: CuentasPaymentAllocation[]
+  /**
+   * Forma vieja: una sola cuenta pagaba todo. Las operaciones de mayo y junio de 2026
+   * quedaron guardadas así; se sigue leyendo para no reescribir el histórico.
+   */
+  source?: CuentasPaymentSource
+}
+
+/** Normaliza un pago a Wonky a su lista de débitos, venga en la forma nueva o en la vieja. */
+export function wonkyPaymentAllocations(payment: WonkyCuentasPayment): CuentasPaymentAllocation[] {
+  if (payment.sources && payment.sources.length > 0) return payment.sources
+  if (payment.source) return [{ source: payment.source, amountArs: payment.amountArs }]
+  return []
 }
 
 export type CuentasSettlementOperationPayload = {
@@ -134,7 +151,7 @@ export async function persistWonkyCuentasSettlement(
   payment: WonkyCuentasPayment,
   balancesBefore: CuentasMedioBalances,
 ): Promise<CuentasSettlementOperation> {
-  const balancesAfter = applyPaymentSourceDebit(balancesBefore, payment.source, payment.amountArs)
+  const balancesAfter = applyPaymentSourceDebits(balancesBefore, wonkyPaymentAllocations(payment))
   const payload: CuentasSettlementOperationPayload = {
     partners: [],
     balancesAfter,
@@ -193,8 +210,7 @@ export function applyCuentasOperationsToBalances(
 
   for (const op of chronological) {
     if (op.payload.wonkyPayment) {
-      const { source, amountArs } = op.payload.wonkyPayment
-      const debited = applyPaymentSourceDebit(balances, source, amountArs)
+      const debited = applyPaymentSourceDebits(balances, wonkyPaymentAllocations(op.payload.wonkyPayment))
       balances.efectivo = debited.efectivo
       balances.banco = debited.banco
     }

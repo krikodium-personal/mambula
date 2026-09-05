@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { CUENTAS_SOCIAS } from '../lib/cuentasMedioBalances'
 import { formatDateAr } from '../lib/dateFormat'
 import { formatCuentasPaymentSourceLabel } from '../lib/cuentasPaymentSources'
-import type { CuentasSettlementOperation } from '../lib/cuentasSettlementsRepository'
+import { wonkyPaymentAllocations, type CuentasSettlementOperation } from '../lib/cuentasSettlementsRepository'
 
 type CuentasMedioTransactionsSheetProps = {
   formatArs: (value: number) => string
@@ -89,10 +89,15 @@ export default function CuentasMedioTransactionsSheet({
                               <span>Ejemplares</span>
                               <strong>{op.payload.wonkyPayment.copies}</strong>
                             </div>
-                            <div className="sheet-list-item">
-                              <span>Desde</span>
-                              <strong>{formatCuentasPaymentSourceLabel(op.payload.wonkyPayment.source)}</strong>
-                            </div>
+                            {wonkyPaymentAllocations(op.payload.wonkyPayment).map((allocation, index) => (
+                              <div className="sheet-list-item" key={`${op.id}:wonky:${index}`}>
+                                <span>{index === 0 ? 'Desde' : ''}</span>
+                                <strong>
+                                  {formatCuentasPaymentSourceLabel(allocation.source)} ·{' '}
+                                  {formatArs(allocation.amountArs)}
+                                </strong>
+                              </div>
+                            ))}
                           </div>
                         ) : null}
 

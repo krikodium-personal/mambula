@@ -1,7 +1,7 @@
 import type { CuentasSocia } from './cuentasMedioBalances'
 import { formatDateAr } from './dateFormat'
 import type { CuentasPaymentSource } from './cuentasPaymentSources'
-import type { CuentasSettlementOperation } from './cuentasSettlementsRepository'
+import { wonkyPaymentAllocations, type CuentasSettlementOperation } from './cuentasSettlementsRepository'
 import type { Sale } from '../types'
 
 export type CuentasMedioEfectivoBucket = { medium: 'efectivo'; socia: CuentasSocia }
@@ -69,17 +69,25 @@ export function collectCuentasMedioMovements(
 
     if (op.payload.wonkyPayment) {
       const payment = op.payload.wonkyPayment
-      if (matchesBucket(bucket, payment.source) && payment.amountArs > 0) {
+      const allocations = wonkyPaymentAllocations(payment)
+      const split = allocations.length > 1
+
+      allocations.forEach((allocation, index) => {
+        if (!matchesBucket(bucket, allocation.source) || allocation.amountArs <= 0) return
+
+        const copiesLabel = `${payment.copies} ${payment.copies === 1 ? 'ejemplar' : 'ejemplares'}`
         movements.push({
           kind: 'debit',
-          id: `op:${op.id}:wonky`,
+          id: `op:${op.id}:wonky:${index}`,
           sortKey,
           label: 'Saldo Wonky',
-          meta: `${payment.copies} ${payment.copies === 1 ? 'ejemplar' : 'ejemplares'} · ${formatDateAr(op.settledOn)}`,
-          amountArs: payment.amountArs,
+          meta: split
+            ? `${copiesLabel} · ${formatDateAr(op.settledOn)} · pago repartido entre cuentas`
+            : `${copiesLabel} · ${formatDateAr(op.settledOn)}`,
+          amountArs: allocation.amountArs,
           settledOn: op.settledOn,
         })
-      }
+      })
     }
 
     for (const line of op.payload.partners) {

@@ -1,7 +1,7 @@
 import { WONKY_ARS_PER_VENTA_COPY } from '../data/partnerSplits'
 import { formatCuentasPaymentSourceLabel } from '../lib/cuentasPaymentSources'
 import { formatDateAr } from '../lib/dateFormat'
-import type { CuentasSettlementOperation } from '../lib/cuentasSettlementsRepository'
+import { wonkyPaymentAllocations, type CuentasSettlementOperation } from '../lib/cuentasSettlementsRepository'
 import { isWonkyEjemplaresScope } from '../lib/wonkySettlement'
 import type { PartnerSettlement } from '../types'
 
@@ -70,12 +70,17 @@ export default function WonkyLiquidacionTransactionsSheet({
                         <span>Ejemplares</span>
                         <strong>{copies}</strong>
                       </div>
-                      {payment ? (
-                        <div className="sheet-list-item">
-                          <span>Desde</span>
-                          <strong>{formatCuentasPaymentSourceLabel(payment.source)}</strong>
-                        </div>
-                      ) : null}
+                      {payment
+                        ? wonkyPaymentAllocations(payment).map((allocation, index) => (
+                            <div className="sheet-list-item" key={`${row.id}:src:${index}`}>
+                              <span>{index === 0 ? 'Desde' : ''}</span>
+                              <strong>
+                                {formatCuentasPaymentSourceLabel(allocation.source)} ·{' '}
+                                {formatArs(allocation.amountArs)}
+                              </strong>
+                            </div>
+                          ))
+                        : null}
                     </div>
                   </li>
                 )

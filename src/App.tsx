@@ -41,7 +41,7 @@ import {
   persistWonkyCuentasSettlement,
   type CuentasSettlementOperation,
 } from './lib/cuentasSettlementsRepository'
-import type { CuentasPaymentSource } from './lib/cuentasPaymentSources'
+import type { CuentasPaymentAllocation } from './lib/cuentasPaymentSources'
 import {
   breakdownInventoryMovement,
   inventoryCopiesFromBoxes,
@@ -494,7 +494,7 @@ function App() {
       copies: number
       settledOn: string
       amountArs: number
-      source: CuentasPaymentSource
+      sources: CuentasPaymentAllocation[]
     },
     balancesBefore: CuentasMedioBalances,
   ) {
@@ -503,7 +503,7 @@ function App() {
       {
         copies: input.copies,
         amountArs: input.amountArs,
-        source: input.source,
+        sources: input.sources,
       },
       balancesBefore,
     )
@@ -1288,7 +1288,7 @@ function HomeScreen({
       copies: number
       settledOn: string
       amountArs: number
-      source: CuentasPaymentSource
+      sources: CuentasPaymentAllocation[]
     },
     balancesBefore: CuentasMedioBalances,
   ) => Promise<void>
