@@ -63,16 +63,21 @@ export function cloneCuentasBalances(b: CuentasMedioBalances): CuentasMedioBalan
   }
 }
 
-export function clampCuentasBalances(b: CuentasMedioBalances): CuentasMedioBalances {
+/**
+ * Redondea los saldos a pesos enteros. **No los pisa en 0 a proposito**: un saldo
+ * negativo significa que se retiro mas plata de la que ese bucket tenia (p. ej.
+ * porque despues se borro una venta que ya estaba repartida) y tiene que verse.
+ */
+export function roundCuentasBalances(b: CuentasMedioBalances): CuentasMedioBalances {
   return {
     efectivo: {
-      Delfi: Math.max(0, Math.round(b.efectivo.Delfi)),
-      Mechi: Math.max(0, Math.round(b.efectivo.Mechi)),
-      Susan: Math.max(0, Math.round(b.efectivo.Susan)),
+      Delfi: Math.round(b.efectivo.Delfi),
+      Mechi: Math.round(b.efectivo.Mechi),
+      Susan: Math.round(b.efectivo.Susan),
     },
     banco: {
-      Delfi: Math.max(0, Math.round(b.banco.Delfi)),
-      Mechi: Math.max(0, Math.round(b.banco.Mechi)),
+      Delfi: Math.round(b.banco.Delfi),
+      Mechi: Math.round(b.banco.Mechi),
     },
   }
 }

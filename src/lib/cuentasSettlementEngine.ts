@@ -1,7 +1,7 @@
 import { parseArsDraftAmount } from './arsInputFormat'
 import {
   cloneCuentasBalances,
-  clampCuentasBalances,
+  roundCuentasBalances,
   CUENTAS_BANK_ACCOUNTS,
   CUENTAS_SOCIAS,
   SOCIAS_WITH_OWN_BANK,
@@ -51,8 +51,19 @@ export type CuentasSettlementComputeResult = {
   questions: CuentasSettlementQuestion[]
 }
 
+/** Redondea un importe a retirar: nunca negativo. */
 function roundArs(n: number) {
   return Math.max(0, Math.round(n * 100) / 100)
+}
+
+/** Redondea un saldo: puede quedar negativo si se retiró de más. */
+function roundBalance(n: number) {
+  return Math.round(n * 100) / 100
+}
+
+/** Plata efectivamente disponible en un bucket. Un saldo negativo no aporta nada. */
+function availableArs(balance: number): number {
+  return Math.max(0, balance)
 }
 
 function drainPoolAscending(
@@ -141,20 +152,18 @@ function emptySettlementLine(partner: CuentasSocia, requestedArs: number): Cuent
 }
 
 function applyLineToBalances(balances: CuentasMedioBalances, line: CuentasPartnerSettlementLine) {
-  balances.efectivo[line.partner] = roundArs(
-    Math.max(0, balances.efectivo[line.partner] - line.fromEfectivoArs),
+  balances.efectivo[line.partner] = roundBalance(
+    balances.efectivo[line.partner] - line.fromEfectivoArs,
   )
   if (line.fromOwnBankArs > 0) {
     const key = line.partner as CuentasBankAccount
-    balances.banco[key] = roundArs(Math.max(0, balances.banco[key] - line.fromOwnBankArs))
+    balances.banco[key] = roundBalance(balances.banco[key] - line.fromOwnBankArs)
   }
   for (const debit of line.fromPool) {
-    balances.banco[debit.account] = roundArs(Math.max(0, balances.banco[debit.account] - debit.amountArs))
+    balances.banco[debit.account] = roundBalance(balances.banco[debit.account] - debit.amountArs)
   }
   for (const debit of line.fromEfectivoPool) {
-    balances.efectivo[debit.socia] = roundArs(
-      Math.max(0, balances.efectivo[debit.socia] - debit.amountArs),
-    )
+    balances.efectivo[debit.socia] = roundBalance(balances.efectivo[debit.socia] - debit.amountArs)
   }
 }
 
@@ -176,8 +185,8 @@ function trySettlePartner(
 
   const work = cloneCuentasBalances(balances)
 
-  const fromEfectivoArs = Math.min(work.efectivo[partner], requested)
-  work.efectivo[partner] = roundArs(work.efectivo[partner] - fromEfectivoArs)
+  const fromEfectivoArs = Math.min(availableArs(work.efectivo[partner]), requested)
+  work.efectivo[partner] = roundBalance(work.efectivo[partner] - fromEfectivoArs)
 
   let remanente = roundArs(requested - fromEfectivoArs)
   let fromOwnBankArs = 0
@@ -186,8 +195,8 @@ function trySettlePartner(
 
   if (hasOwnBank) {
     if (remanente > 0) {
-      fromOwnBankArs = Math.min(work.banco[partner as CuentasBankAccount], remanente)
-      work.banco[partner as CuentasBankAccount] = roundArs(
+      fromOwnBankArs = Math.min(availableArs(work.banco[partner as CuentasBankAccount]), remanente)
+      work.banco[partner as CuentasBankAccount] = roundBalance(
         work.banco[partner as CuentasBankAccount] - fromOwnBankArs,
       )
       remanente = roundArs(remanente - fromOwnBankArs)
@@ -306,7 +315,7 @@ export function computeCuentasSettlement(
 
     if (!outcome.ok) {
       questions.push(outcome.question)
-      return { lines, balancesAfter: clampCuentasBalances(balances), questions }
+      return { lines, balancesAfter: roundCuentasBalances(balances), questions }
     }
 
     if (outcome.line.settledArs > 0) {
@@ -314,7 +323,7 @@ export function computeCuentasSettlement(
     }
   }
 
-  return { lines, balancesAfter: clampCuentasBalances(balances), questions: [] }
+  return { lines, balancesAfter: roundCuentasBalances(balances), questions: [] }
 }
 
 export function parseRequestedAmounts(draft: Record<CuentasSocia, string>): Record<CuentasSocia, number> {

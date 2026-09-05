@@ -504,6 +504,24 @@ button.stat-card.stat-card--clickable {
   margin: 0 0 14px;
 }
 
+.cuentas-card-alert {
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  border-left: 3px solid var(--red);
+  border-radius: 8px;
+  color: var(--label);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+}
+
+/* Saldo en negativo: se retiró más de lo que ese bucket tuvo. */
+.cuentas-amount--negative,
+.cuentas-subtotal strong.cuentas-amount--negative,
+.cuentas-row-button strong.cuentas-amount--negative {
+  color: var(--red);
+}
+
 .cuentas-settle-available-hint {
   color: var(--label-3);
   display: block;

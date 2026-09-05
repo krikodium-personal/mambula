@@ -1432,9 +1432,25 @@ function HomeScreen({
       applyCuentasOperationsToBalances(
         { efectivo: cuentasMedioGross.efectivo, banco: cuentasMedioGross.banco },
         cuentasOperations,
-        sales,
       ),
-    [cuentasMedioGross, cuentasOperations, sales],
+    [cuentasMedioGross, cuentasOperations],
+  )
+
+  /** Un saldo negativo significa que se retiró más de lo que ese bucket llegó a tener. */
+  const cuentasAmountClass = (amountArs: number) =>
+    amountArs < 0 ? 'cuentas-amount cuentas-amount--negative' : 'cuentas-amount'
+
+  const cuentasNegativos = useMemo(
+    () =>
+      [
+        ...CUENTAS_SOCIAS.map((socia) => ({
+          label: `efectivo de ${socia}`,
+          amountArs: cuentasBalances.efectivo[socia],
+        })),
+        { label: 'banco de Delfi', amountArs: cuentasBalances.banco.Delfi },
+        { label: 'banco de Mechi', amountArs: cuentasBalances.banco.Mechi },
+      ].filter((row) => row.amountArs < 0),
+    [cuentasBalances],
   )
 
   /** Ventas cobradas por bucket (para detalle al tocar una fila). */
@@ -1751,6 +1767,18 @@ function HomeScreen({
             Los saldos bajan al confirmar un saldo de cuenta.
           </p>
 
+          {cuentasNegativos.length > 0 ? (
+            <p className="cuentas-card-alert">
+              Hay saldos en negativo:{' '}
+              {cuentasNegativos
+                .map((row) => `${row.label} (${currencyArsFormatter.format(row.amountArs)})`)
+                .join(', ')}
+              . Significa que se retiró más plata de la que ese bucket llegó a tener — normalmente
+              porque después se borró o se editó una venta que ya estaba repartida. Se compensa
+              solo cuando entren nuevas ventas a ese bucket.
+            </p>
+          ) : null}
+
           <h4 className="cuentas-subsection-label">EFECTIVO</h4>
           <ul className="cuentas-rows">
             {cuentasPorMedio.efectivoRows.map(({ seller, amount, movements }) => (
@@ -1768,14 +1796,16 @@ function HomeScreen({
                   type="button"
                 >
                   <span>{seller}</span>
-                  <strong>{currencyArsFormatter.format(amount)}</strong>
+                  <strong className={cuentasAmountClass(amount)}>{currencyArsFormatter.format(amount)}</strong>
                 </button>
               </li>
             ))}
           </ul>
           <div className="cuentas-subtotal">
             <span>Subtotal efectivo</span>
-            <strong>{currencyArsFormatter.format(cuentasPorMedio.efectivoTotal)}</strong>
+            <strong className={cuentasAmountClass(cuentasPorMedio.efectivoTotal)}>
+              {currencyArsFormatter.format(cuentasPorMedio.efectivoTotal)}
+            </strong>
           </div>
 
           <h4 className="cuentas-subsection-label">TRANSFERENCIA</h4>
@@ -1794,7 +1824,9 @@ function HomeScreen({
                 type="button"
               >
                 <span>Delfi</span>
-                <strong>{currencyArsFormatter.format(cuentasPorMedio.transferencia.Delfi)}</strong>
+                <strong className={cuentasAmountClass(cuentasPorMedio.transferencia.Delfi)}>
+                  {currencyArsFormatter.format(cuentasPorMedio.transferencia.Delfi)}
+                </strong>
               </button>
             </li>
             <li className="cuentas-row cuentas-row--tap">
@@ -1811,7 +1843,9 @@ function HomeScreen({
                 type="button"
               >
                 <span>Mechi</span>
-                <strong>{currencyArsFormatter.format(cuentasPorMedio.transferencia.Mechi)}</strong>
+                <strong className={cuentasAmountClass(cuentasPorMedio.transferencia.Mechi)}>
+                  {currencyArsFormatter.format(cuentasPorMedio.transferencia.Mechi)}
+                </strong>
               </button>
             </li>
             {cuentasPorMedio.transferencia.sinDefinir > 0 ? (
@@ -1835,7 +1869,9 @@ function HomeScreen({
           </ul>
           <div className="cuentas-subtotal">
             <span>Subtotal transferencias</span>
-            <strong>{currencyArsFormatter.format(cuentasPorMedio.transferenciaTotal)}</strong>
+            <strong className={cuentasAmountClass(cuentasPorMedio.transferenciaTotal)}>
+              {currencyArsFormatter.format(cuentasPorMedio.transferenciaTotal)}
+            </strong>
           </div>
         </div>
 

@@ -1,14 +1,13 @@
 import type { CuentasPartnerSettlementLine, CuentasSettlementComputeResult } from './cuentasSettlementEngine'
 import {
-  applyPaidSaleToCuentasBalances,
-  clampCuentasBalances,
   cloneCuentasBalances,
+  roundCuentasBalances,
   type CuentasMedioBalances,
 } from './cuentasMedioBalances'
 import { applyPaymentSourceDebit, type CuentasPaymentSource } from './cuentasPaymentSources'
 import { createPartnerSettlement } from './partnerSettlementsRepository'
 import { supabase } from './supabase'
-import type { Sale, SplitPartnerKey } from '../types'
+import type { SplitPartnerKey } from '../types'
 
 export type WonkyCuentasPayment = {
   copies: number
@@ -79,7 +78,7 @@ export async function persistCuentasSettlement(
 ): Promise<CuentasSettlementOperation> {
   const payload: CuentasSettlementOperationPayload = {
     partners: result.lines.filter((l) => l.settledArs > 0),
-    balancesAfter: clampCuentasBalances(result.balancesAfter),
+    balancesAfter: roundCuentasBalances(result.balancesAfter),
   }
 
   if (!supabase) {
@@ -170,30 +169,26 @@ export async function persistWonkyCuentasSettlement(
 }
 
 function debitBucket(current: number, amount: number): number {
-  return Math.max(0, current - Math.max(0, amount))
+  return current - Math.max(0, amount)
 }
 
-/** Saldos actuales: último snapshot de liquidación (nunca negativo) + ventas posteriores. */
+/**
+ * Saldos actuales = ventas cobradas de hoy − todo lo que se retiró alguna vez.
+ *
+ * Se recalcula **siempre desde cero**: nunca se parte del `balancesAfter` de la última
+ * liquidación. Ese snapshot era una foto congelada, así que borrar o editar una venta
+ * anterior al último cierre no movía las cuentas (pasó en septiembre de 2026 con una
+ * venta de 80 ejemplares que se devolvió). Derivándolo, cualquier cambio en `sales`
+ * impacta acá solo. El `balancesAfter` guardado queda como dato histórico, para mostrar
+ * cómo quedaron las cuentas ese día.
+ *
+ * Puede dar negativo, y está bien que dé: significa que se retiró más de lo que había.
+ */
 export function applyCuentasOperationsToBalances(
   gross: CuentasMedioBalances,
   operations: CuentasSettlementOperation[],
-  sales: Sale[] = [],
 ): CuentasMedioBalances {
   const chronological = [...operations].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  const last = [...chronological].reverse().find((op) => op.payload?.balancesAfter)
-
-  if (last?.payload.balancesAfter) {
-    const balances = clampCuentasBalances(cloneCuentasBalances(last.payload.balancesAfter))
-
-    for (const sale of sales) {
-      if (sale.createdAt && sale.createdAt > last.createdAt) {
-        applyPaidSaleToCuentasBalances(balances, sale)
-      }
-    }
-
-    return clampCuentasBalances(balances)
-  }
-
   const balances = cloneCuentasBalances(gross)
 
   for (const op of chronological) {
@@ -221,5 +216,5 @@ export function applyCuentasOperationsToBalances(
     }
   }
 
-  return clampCuentasBalances(balances)
+  return roundCuentasBalances(balances)
 }

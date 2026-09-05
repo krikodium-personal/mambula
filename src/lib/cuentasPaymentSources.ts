@@ -1,6 +1,6 @@
 import {
-  clampCuentasBalances,
   cloneCuentasBalances,
+  roundCuentasBalances,
   CUENTAS_BANK_ACCOUNTS,
   CUENTAS_SOCIAS,
   type CuentasBankAccount,
@@ -19,8 +19,14 @@ export type CuentasSourceOption = {
   availableArs: number
 }
 
+/** Redondea un importe a cobrar/pagar: nunca negativo. */
 function roundArs(n: number) {
   return Math.max(0, Math.round(n * 100) / 100)
+}
+
+/** Redondea un saldo: puede quedar negativo si se retiró de más. */
+function roundBalance(n: number) {
+  return Math.round(n * 100) / 100
 }
 
 export function formatCuentasPaymentSourceLabel(source: CuentasPaymentSource): string {
@@ -73,10 +79,10 @@ export function applyPaymentSourceDebit(
   const amount = roundArs(amountArs)
 
   if (source.kind === 'efectivo') {
-    next.efectivo[source.socia] = roundArs(Math.max(0, next.efectivo[source.socia] - amount))
+    next.efectivo[source.socia] = roundBalance(next.efectivo[source.socia] - amount)
   } else {
-    next.banco[source.account] = roundArs(Math.max(0, next.banco[source.account] - amount))
+    next.banco[source.account] = roundBalance(next.banco[source.account] - amount)
   }
 
-  return clampCuentasBalances(next)
+  return roundCuentasBalances(next)
 }
