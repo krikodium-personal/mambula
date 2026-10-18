@@ -44,6 +44,7 @@ import {
 import type { CuentasPaymentAllocation } from './lib/cuentasPaymentSources'
 import {
   breakdownInventoryMovement,
+  flattenPromoRows,
   inventoryCopiesFromBoxes,
   promoDeliveredUnitsForStockRow,
   parseStockNumber,
@@ -1324,7 +1325,15 @@ function HomeScreen({
   const [cuentasSettleOpen, setCuentasSettleOpen] = useState(false)
   const [cuentasTxOpen, setCuentasTxOpen] = useState(false)
   const [settlementHistoryOpen, setSettlementHistoryOpen] = useState(false)
-  const availableCopies = projectConfig.firstPrintRun.copies - soldCopies
+  const promoDeliveredCopies = useMemo(
+    () =>
+      flattenPromoRows(promoRows).reduce(
+        (sum, row) => (row.entregado ? sum + row.unidades : sum),
+        0,
+      ),
+    [promoRows],
+  )
+  const availableCopies = projectConfig.firstPrintRun.copies - soldCopies - promoDeliveredCopies
   const copiesPerBox = projectConfig.firstPrintRun.copies / projectConfig.firstPrintRun.boxes
   /** Cajas no asignadas a destinos del Home (mismas filas que la tabla; sin Promocionales). Ejemplares = cajas × libros/caja. */
   const homeInventoryUnassignedStock = useMemo(() => {
